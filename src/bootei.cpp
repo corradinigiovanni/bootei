@@ -40,8 +40,55 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <memory>
+
 
 using namespace Rcpp;
+
+// -------------------------------------------------------------------
+// RNG state guard: restore .Random.seed on exit (no external side effects)
+// -------------------------------------------------------------------
+class RNGStateGuard {
+public:
+  explicit RNGStateGuard(bool active_)
+    : env(Rcpp::Environment::global_env()),
+      active(active_),
+      had_seed(false),
+      saved_seed(R_NilValue) {
+    
+    if (!active) return;
+    
+    had_seed = env.exists(".Random.seed");
+    if (had_seed) {
+      saved_seed = Rf_duplicate(env.get(".Random.seed"));
+      R_PreserveObject(saved_seed);
+    }
+  }
+  
+  ~RNGStateGuard() {
+    if (!active) return;
+    
+    try {
+      if (had_seed) {
+        env[".Random.seed"] = saved_seed;
+      } else {
+        if (env.exists(".Random.seed")) env.remove(".Random.seed");
+      }
+    } catch (...) {
+      // never throw from destructor
+    }
+    
+    if (saved_seed != R_NilValue) R_ReleaseObject(saved_seed);
+  }
+  
+private:
+  Rcpp::Environment env;
+  bool active;
+  bool had_seed;
+  SEXP saved_seed;
+};
+
+
 
 // -------------------------------------------------------------------
 // Bootstrap type
@@ -207,10 +254,10 @@ double mannwhitney_raw_U(const NumericVector &x, const NumericVector &y){
   
   NumericVector rk = rank_numeric(z);
   double R1 = 0.0;
-  for (int i = 0; i < n; ++i)
+  for (int i = 0; i < n; ++i) {
     if (grp[i] == 0) R1 += rk[i];
-    
-    return R1 - (double)nx * (nx + 1) / 2.0;
+  }
+  return R1 - (double)nx * (nx + 1) / 2.0;
 }
 
 std::function<double(const NumericVector&, const IntegerVector&)>
@@ -908,12 +955,18 @@ List bootei(SEXP x, SEXP y,
   
   BootType btype = parse_boot_type(boot_type);
   
-  // Set seed (permutations + (if applicable) shift / Efron keys generation)
-  if (!NumericVector::is_na(perm_seed)) {
+  // Set seed locally (no effect on caller RNG state)
+  // Set seed locally (no effect on caller RNG state)
+  const bool do_seed = !Rcpp::NumericVector::is_na(perm_seed);
+  RNGStateGuard rng_guard(do_seed);
+  
+  if (do_seed) {
     Environment base = Environment::namespace_env("base");
     Function set_seed = base["set.seed"];
     set_seed(perm_seed);
   }
+  
+  
   
   // ---------------------------------------------------------------
   // χ² test (independence)
