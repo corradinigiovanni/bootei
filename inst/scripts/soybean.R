@@ -1,8 +1,3 @@
-
-giovanni corradini <giovanni.corradini.01@gmail.com>
-  3:27 PM (1 hour ago)
-to me
-
 ## ===============================================================
 ## BOOTEI vs Classical Permutation vs mid-p on Soybean (mlbench)
 ## Article-explanatory (aligned with simulations): ONLY
@@ -18,7 +13,8 @@ to me
 ## ===============================================================
 
 ## ----------------- compile / load -----------------
-Rcpp::sourceCpp("/media/data/corradini/butei/bootei.cpp")
+# remotes::install_github("corradinigiovanni/bootei")  
+library(bootei)
 
 library(mlbench)
 data("Soybean", package = "mlbench")
@@ -393,7 +389,7 @@ top_chi2 <- top_improvements(df_chi2, k = 20, pperm_max = pperm_max)
 ## Save results
 ## ===============================================================
 
-out_dir <- "/media/data/corradini/butei/soybean/"
+out_dir <- "--"
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 saveRDS(
