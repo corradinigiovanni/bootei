@@ -28,7 +28,7 @@ bootei(
 
 \item{alternative}{'two.sided', 'greater', or 'less'.}
 
-\item{perm_seed}{Optional seed for reproducibility.}
+\item{perm_seed}{Optional seed for reproducibility (does NOT affect caller RNG).}
 
 \item{midp}{Logical; mid-p only when B<=1.}
 
@@ -37,7 +37,7 @@ bootei(
 \item{keep_perm_stats}{Logical; keep permutation stats.}
 }
 \value{
-A list with statistic_raw, statistic, tie_breaker, p.value, method, alternative (and optionally perm stats).
+A list with statistic_raw, statistic, tie_breaker, p.value, method, alternative.
 }
 \description{
 Permutation-based inference with optional coupled bootstrap tie-breaking (BOOTEI).

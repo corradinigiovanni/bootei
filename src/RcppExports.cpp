@@ -10,9 +10,9 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// bootei
-List bootei(SEXP x, SEXP y, std::string test, int B, int R, std::string alternative, double perm_seed, bool midp, std::string boot_type, bool keep_perm_stats);
-RcppExport SEXP _bootei_bootei(SEXP xSEXP, SEXP ySEXP, SEXP testSEXP, SEXP BSEXP, SEXP RSEXP, SEXP alternativeSEXP, SEXP perm_seedSEXP, SEXP midpSEXP, SEXP boot_typeSEXP, SEXP keep_perm_statsSEXP) {
+// bootei_cpp
+List bootei_cpp(SEXP x, SEXP y, std::string test, int B, int R, std::string alternative, double perm_seed, bool midp, std::string boot_type, bool keep_perm_stats);
+RcppExport SEXP _bootei_bootei_cpp(SEXP xSEXP, SEXP ySEXP, SEXP testSEXP, SEXP BSEXP, SEXP RSEXP, SEXP alternativeSEXP, SEXP perm_seedSEXP, SEXP midpSEXP, SEXP boot_typeSEXP, SEXP keep_perm_statsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -26,13 +26,13 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type midp(midpSEXP);
     Rcpp::traits::input_parameter< std::string >::type boot_type(boot_typeSEXP);
     Rcpp::traits::input_parameter< bool >::type keep_perm_stats(keep_perm_statsSEXP);
-    rcpp_result_gen = Rcpp::wrap(bootei(x, y, test, B, R, alternative, perm_seed, midp, boot_type, keep_perm_stats));
+    rcpp_result_gen = Rcpp::wrap(bootei_cpp(x, y, test, B, R, alternative, perm_seed, midp, boot_type, keep_perm_stats));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_bootei_bootei", (DL_FUNC) &_bootei_bootei, 10},
+    {"_bootei_bootei_cpp", (DL_FUNC) &_bootei_bootei_cpp, 10},
     {NULL, NULL, 0}
 };
 
