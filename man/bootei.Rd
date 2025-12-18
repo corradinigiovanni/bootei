@@ -2,7 +2,7 @@
 % Please edit documentation in R/bootei.R
 \name{bootei}
 \alias{bootei}
-\title{BOOTEI permutation tests}
+\title{BOOTEI permutation tests with coupled bootstrap tie-breaking}
 \usage{
 bootei(
   x,
@@ -18,27 +18,24 @@ bootei(
 )
 }
 \arguments{
-\item{x, y}{Input vectors (numeric/integer/factor/character depending on \code{test}).}
+\item{x, y}{Inputs (see README).}
 
-\item{test}{One of 'chisq', 'spearman', 'mannwhitney', 'kruskalwallis'.}
+\item{test}{One of "chisq", "mannwhitney", "spearman", "kruskalwallis".}
 
-\item{B}{Bootstrap budget for tie-breaking (B<=1 = classical permutation).}
+\item{B}{Number of bootstrap replicates (B <= 1 gives classical permutation p-value).}
 
-\item{R}{Number of Monte Carlo permutations.}
+\item{R}{Number of permutations.}
 
-\item{alternative}{'two.sided', 'greater', or 'less'.}
+\item{alternative}{"two.sided", "greater", or "less".}
 
-\item{perm_seed}{Optional seed for reproducibility (does NOT affect caller RNG).}
+\item{perm_seed}{Optional seed used ONLY inside bootei (does not affect caller RNG).}
 
-\item{midp}{Logical; mid-p only when B<=1.}
+\item{midp}{Logical; mid-p correction (only used when B <= 1).}
 
-\item{boot_type}{'sobol', 'sobol_shift', or 'efron'.}
+\item{boot_type}{"sobol", "sobol_shift", or "efron".}
 
 \item{keep_perm_stats}{Logical; keep permutation stats.}
 }
-\value{
-A list with statistic_raw, statistic, tie_breaker, p.value, method, alternative.
-}
 \description{
-Permutation-based inference with optional coupled bootstrap tie-breaking (BOOTEI).
+BOOTEI permutation tests with coupled bootstrap tie-breaking
 }

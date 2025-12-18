@@ -957,16 +957,12 @@ List bootei_cpp(SEXP x, SEXP y,
 
   BootType btype = parse_boot_type(boot_type);
 
-  // Set seed locally (no effect on caller RNG state)
-  // Set seed locally (no effect on caller RNG state)
-  const bool do_seed = !Rcpp::NumericVector::is_na(perm_seed);
+
+  // Do NOT set the global R RNG seed from C++.
+  // Seed handling is done in the R wrapper to avoid side effects.
+  const bool do_seed = false;
   RNGStateGuard rng_guard(do_seed);
 
-  if (do_seed) {
-    Environment base = Environment::namespace_env("base");
-    Function set_seed = base["set.seed"];
-    set_seed(perm_seed);
-  }
 
 
 
