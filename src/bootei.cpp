@@ -60,7 +60,8 @@ public:
 
     had_seed = env.exists(".Random.seed");
     if (had_seed) {
-      saved_seed = Rf_duplicate(env.get(".Random.seed"));
+      SEXP seed = env.get(".Random.seed");
+      saved_seed = Rf_duplicate(seed);
       R_PreserveObject(saved_seed);
     }
   }
@@ -70,10 +71,11 @@ public:
 
     try {
       if (had_seed) {
-        env[".Random.seed"] = saved_seed;
+        env.assign(".Random.seed", saved_seed);
       } else {
         if (env.exists(".Random.seed")) env.remove(".Random.seed");
       }
+
     } catch (...) {
       // never throw from destructor
     }
