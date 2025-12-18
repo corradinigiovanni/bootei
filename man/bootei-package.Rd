@@ -2,7 +2,6 @@
 % Please edit documentation in R/bootei-package.R
 \docType{package}
 \name{bootei-package}
-\alias{bootei}
 \alias{bootei-package}
 \title{bootei: BOOTEI permutation tests}
 \description{
