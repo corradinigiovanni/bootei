@@ -6,7 +6,7 @@ BOOTEI permutation tests with coupled bootstrap tie-breaking (Rcpp/C++).
 
 ```r
 install.packages("remotes")
-remotes::install_github("condor-machine/bootei")  # change if repo name differs
+remotes::install_github("corradinigiovanni/bootei")  
 ```
 
 ## Examples (classical vs BOOTEI)
