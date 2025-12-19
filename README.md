@@ -33,8 +33,8 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 ### 2) Mann–Whitney (ordinal, ties)
 
 ```r
-x <- sample(c(0,1, 2), 5, replace = TRUE)
-y <- sample(c(0,1, 2), 5, replace = TRUE)
+x <- sample(c(0,1,2), 5, replace = TRUE)
+y <- sample(c(0,1,2), 5, replace = TRUE)
 
 p_perm   <- bootei::bootei(x, y, test = "mannwhitney", B = 1,   R = 5000,
                            alternative = "two.sided", perm_seed = 910)$p.value
@@ -48,8 +48,8 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 ### 3) Spearman (rank ties)
 
 ```r
-x <- sample(c(0,1, 2), 10, replace = TRUE)
-y <- sample(c(0,1, 2), 10, replace = TRUE)
+x <- sample(c(0,1,2), 10, replace = TRUE)
+y <- sample(c(0,1,2), 10, replace = TRUE)
 
 p_perm   <- bootei::bootei(x, y, test = "spearman", B = 1,   R = 5000,
                            alternative = "two.sided", perm_seed = 910)$p.value
@@ -64,9 +64,9 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 
 ```r
 g <- factor(rep(c("G1","G2","G3"), each = 5))
-x <- c(sample(c(0, 1, 2), 5, replace = TRUE),    # G1
-       sample(c(0, 1, 2), 5, replace = TRUE),    # G2
-       sample(c(0, 1, 2), 5, replace = TRUE))    # G3
+x <- c(sample(c(0,1,2), 5, replace = TRUE),    # G1
+       sample(c(0,1,2), 5, replace = TRUE),    # G2
+       sample(c(0,1,2), 5, replace = TRUE))    # G3
 
 p_perm   <- bootei::bootei(x, g, test = "kruskalwallis", B = 1,   R = 5000,
                            alternative = "greater", perm_seed = 910)$p.value
