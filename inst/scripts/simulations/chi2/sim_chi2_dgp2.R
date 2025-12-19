@@ -63,7 +63,7 @@ suppressPackageStartupMessages({
 ## 0) PATH, C++ engine and global parameters
 ## ----------------------------------------------------------------
 
-ROOT <- "/media/data/corradini/prove_bootei/chi2/"
+ROOT <- "."
 dir.create(ROOT, recursive = TRUE, showWarnings = FALSE)
 setwd(ROOT)
 
