@@ -13,6 +13,7 @@
 ## ===============================================================
 
 ## ----------------- compile / load -----------------
+# install.packages("remotes")
 # remotes::install_github("corradinigiovanni/bootei")  
 library(bootei)
 
