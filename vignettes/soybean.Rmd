@@ -72,8 +72,6 @@ prep_cat <- function(z) {
 
 
 ## Example 1: Pearson chi-square (within-class independence)
-text
-Copy code
 
 
 ```{r chi2-example}
@@ -109,8 +107,6 @@ p_bootei_chi2
 
 
 ## Example 2: Mann--Whitney (two-sample comparison across classes)
-text
-Copy code
 
 
 
