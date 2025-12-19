@@ -13,8 +13,7 @@
 #     * BOOTEI p-value (B > 1) with lexicographic tie-breaking
 #
 # - Engine: bootei() (C++/Rcpp) with test = "chisq"
-#     * boot_type = "sobol_shift"  (Sobol QMC + one random digital shift per call,
-#                                  then resampling keys fixed and coupled across permutations)
+#     * boot_type = "sobol"  (Sobol QMC, then resampling keys fixed and coupled across permutations)
 #
 # - DGP (DGP1): RC1 model with constant (uniform) margins for rows and columns
 #
