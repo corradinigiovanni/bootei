@@ -3,7 +3,7 @@ Title: Bootstrap Ensemble Tie-Breaking for Permutation Tests
 Version: 0.1.0
 Authors@R: 
     person("Giovanni", "Corradini", 
-           email = "giovanni.corradini@<your-domain>", 
+           email = "giovanni.corradini.giovanni@gmail.com", 
            role = c("aut", "cre"))
 Description: 
     Provides BOOTEI (Bootstrap Ensemble Inference), a drop-in refinement of
