@@ -1,0 +1,157 @@
+---
+title: "BOOTEI on the Soybean data"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{BOOTEI on the Soybean data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  message  = FALSE,
+  warning  = FALSE
+)
+```
+
+
+
+## Overview
+
+This vignette illustrates how **BOOTEI** refines classical permutation tests when the
+primary test statistic is discrete and ties are likely.
+
+We demonstrate:
+
+1. A Pearson chi-square test of independence within a single disease class
+   of the Soybean dataset.
+2. A two-sample Mann--Whitney comparison across two disease classes on an
+   ordinally encoded attribute.
+
+We compare the baseline add-one Monte Carlo permutation p-value
+(obtained by setting `B = 1`) with the BOOTEI-refined p-value
+(using an ensemble plan with `B = 200`).
+
+## Data
+
+We use the `Soybean` dataset from the `mlbench` package.
+
+```{r data}
+library(bootei)
+library(mlbench)
+
+data("Soybean", package = "mlbench")
+
+dd <- Soybean
+dd$Class <- droplevels(dd$Class)   # stable indexing of class labels
+classes  <- levels(dd$Class)
+```
+
+
+## Helpers
+
+The following helpers mirror the preprocessing used in the full automated
+scan scripts.
+
+
+```{r helpers}
+to_numeric_ordinal <- function(z) {
+  if (is.factor(z) || is.character(z)) {
+    suppressWarnings(as.numeric(as.character(z)))
+  } else {
+    suppressWarnings(as.numeric(z))
+  }
+}
+
+prep_cat <- function(z) {
+  if (is.factor(z)) droplevels(z) else droplevels(factor(z))
+}
+```
+
+
+## Example 1: Pearson chi-square (within-class independence)
+text
+Copy code
+
+
+```{r chi2-example}
+sub <- dd[dd$Class == classes[3], , drop = FALSE]
+
+x0 <- sub[[3]]
+y0 <- sub[[31]]
+
+ok <- !(is.na(x0) | is.na(y0))
+x  <- prep_cat(x0[ok])
+y  <- prep_cat(y0[ok])
+
+table(x, y)
+```
+
+
+```{r chi2-pvalues}
+p_perm_chi2 <- bootei(
+  x, y,
+  B = 1L, R = 5000L, perm_seed = 910L,
+  test = "chisq"
+)$p.value
+
+p_bootei_chi2 <- bootei(
+  x, y,
+  B = 200L, R = 5000L, perm_seed = 910L,
+  test = "chisq"
+)$p.value
+
+p_perm_chi2
+p_bootei_chi2
+```
+
+
+## Example 2: Mann--Whitney (two-sample comparison across classes)
+text
+Copy code
+
+
+
+```{r mw-example}
+x <- to_numeric_ordinal(dd[dd$Class == classes[15], 10])
+y <- to_numeric_ordinal(dd[dd$Class == classes[19], 10])
+
+x <- x[!is.na(x)]
+y <- y[!is.na(y)]
+
+c(nx = length(x), ny = length(y))
+c(uniq_x = length(unique(x)), uniq_y = length(unique(y)))
+```
+
+
+```{r mw-pvalues}
+p_perm_mw <- bootei(
+  x, y,
+  B = 1L, R = 5000L, perm_seed = 910L,
+  test = "mannwhitney"
+)$p.value
+
+p_bootei_mw <- bootei(
+  x, y,
+  B = 200L, R = 5000L, perm_seed = 910L,
+  test = "mannwhitney"
+)$p.value
+
+p_perm_mw
+p_bootei_mw
+```
+
+
+
+## Notes on reproducibility
+
+Fixing the permutation seed ensures reproducibility of the Monte Carlo
+permutation distribution. BOOTEI differs from the baseline permutation test
+only when the primary statistic produces ties; when ties are rare, the two
+procedures coincide almost exactly.
+
+
+
+
