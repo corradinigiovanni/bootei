@@ -76,7 +76,8 @@ ROOT <- "."
 dir.create(ROOT, recursive = TRUE, showWarnings = FALSE)
 setwd(ROOT)
 
-# C++ QMC source
+# install.packages("remotes")
+# remotes::install_github("corradinigiovanni/bootei")  
 library(bootei)
 
 set.seed(123)
