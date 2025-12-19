@@ -1,9 +1,17 @@
 Package: bootei
-Title: What the Package Does (One Line, Title Case)
-Version: 0.0.0.9000
+Title: Bootstrap Ensemble Tie-Breaking for Permutation Tests
+Version: 0.1.0
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
+    person("Giovanni", "Corradini", 
+           email = "giovanni.corradini@<your-domain>", 
+           role = c("aut", "cre"))
+Description: 
+    Provides BOOTEI (Bootstrap Ensemble Inference), a drop-in refinement of
+    classical Monte Carlo permutation tests for discrete test statistics.
+    The method preserves finite-sample validity and the interpretation of
+    permutation p-values, while resolving ties via a coupled bootstrap
+    ensemble layer. BOOTEI pointwise dominates the standard add-one
+    permutation p-value and coincides with it when ties are absent.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -12,3 +20,8 @@ LinkingTo:
     Rcpp
 Imports: 
     Rcpp
+Suggests:
+    knitr,
+    rmarkdown,
+    mlbench
+VignetteBuilder: knitr
