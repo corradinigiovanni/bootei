@@ -72,6 +72,11 @@ p_bootei <- bootei::bootei(x, g, test = "kruskalwallis", B = 200, R = 5000,
 c(p_perm = p_perm, p_bootei = p_bootei)
 ```
 
+## Vignettes
+
+An introductory vignette illustrating the use of BOOTEI on the Soybean dataset
+is available via `browseVignettes("bootei")`.
+
 ## Notes
 
 - `R` = number of Monte Carlo permutations (increase for final runs).
