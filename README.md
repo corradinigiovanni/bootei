@@ -6,7 +6,8 @@ BOOTEI permutation tests with coupled bootstrap tie-breaking (Rcpp/C++).
 
 ```r
 install.packages("remotes")
-remotes::install_github("corradinigiovanni/bootei")  
+remotes::install_github("corradinigiovanni/bootei")
+library(bootei)
 ```
 
 ## Examples (classical vs BOOTEI)
