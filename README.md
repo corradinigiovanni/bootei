@@ -1,6 +1,15 @@
 # bootei
 
-BOOTEI permutation tests with coupled bootstrap tie-breaking (Rcpp/C++).
+BOOTEI (BOOTstrap Ensemble Inference) provides permutation tests with deterministic,
+coupled bootstrap tie-breaking, designed for low-resolution regimes such as small
+samples, sparse tables, few outcome levels, and pervasive ties.
+
+The method preserves the original permutation test statistic and uses a fixed
+bootstrap ensemble score solely to break permutation ties via a lexicographic
+ordering. Under exchangeability, BOOTEI retains finite-sample validity and yields
+permutation p-values that are never larger than those from the corresponding
+classical permutation test.
+
 
 ## Install
 
@@ -15,7 +24,9 @@ library(bootei)
 Classical permutation: `B = 1`  
 BOOTEI tie-breaking: `B > 1` (e.g., `B = 200`)
 
-These toy examples use *discrete/ordinal data* to induce many ties under permutations (often making BOOTEI < classical).
+These toy examples use *discrete or ordinal data* to induce many ties under permutations,
+a setting in which BOOTEI deterministically refines the permutation ordering and
+yields p-values that are never larger than the corresponding classical permutation p-values.
 
 ### 1) Chi-square (categorical)
 
