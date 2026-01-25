@@ -1,27 +1,16 @@
 Package: bootei
 Title: Bootstrap Ensemble Tie-Breaking for Permutation Tests
-Version: 0.1.0
+Description: Implements BOOTstrap Ensemble Inference (BOOTEI), a generic refinement
+    for discrete permutation tests in low-resolution regimes such as small samples,
+    sparse contingency tables, few outcome levels, and pervasive ties. The method
+    preserves the original permutation test statistic and augments it with a bootstrap
+    ensemble score used solely to deterministically break ties in the permutation
+    reference distribution. By reusing a fixed bootstrap plan across permutations,
+    BOOTEI retains finite-sample validity under exchangeability and yields permutation
+    p-values that are never larger than those from the classical permutation test.
 Authors@R: 
-    person("Giovanni", "Corradini", 
-           email = "giovanni.corradini.giovanni@gmail.com", 
-           role = c("aut", "cre"))
-Description: 
-    Provides BOOTEI (Bootstrap Ensemble Inference), a drop-in refinement of
-    classical Monte Carlo permutation tests for discrete test statistics.
-    The method preserves finite-sample validity and the interpretation of
-    permutation p-values, while resolving ties via a coupled bootstrap
-    ensemble layer. BOOTEI pointwise dominates the standard add-one
-    permutation p-value and coincides with it when ties are absent.
+    person("Giovanni", "Corradini", role = c("aut", "cre"),
+           email = "corradini@leibniz-bips.de")
 License: MIT + file LICENSE
 Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
-LinkingTo: 
-    Rcpp
-Imports: 
-    Rcpp
-Suggests:
-    knitr,
-    rmarkdown,
-    mlbench
-VignetteBuilder: knitr
+LazyData: true
