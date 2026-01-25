@@ -3,12 +3,20 @@
 \docType{package}
 \name{bootei-package}
 \alias{bootei-package}
-\title{bootei: BOOTEI permutation tests}
+\title{bootei: Bootstrap Ensemble Tie-Breaking for Permutation Tests}
 \description{
-What the package does (one paragraph).
+Implements BOOTstrap Ensemble Inference (BOOTEI), a generic refinement for discrete
+permutation tests in low-resolution regimes such as small samples, sparse contingency
+tables, few outcome levels, and pervasive ties. The method preserves the original
+permutation test statistic and augments it with a bootstrap ensemble score, used solely
+to deterministically break ties in the permutation reference distribution via a
+lexicographic ordering. By generating a fixed bootstrap plan once per dataset and
+reusing it equivariantly across all permutations, BOOTEI retains finite-sample
+validity under exchangeability and yields permutation p-values that are never larger
+than those from the corresponding classical permutation test, and therefore no less
+powerful against any alternative.
 }
 \author{
-\strong{Maintainer}: First Last \email{first.last@example.com}
-
+\strong{Maintainer}: Giovanni Corradini \email{corradini@leibniz-bips.de}
 }
 \keyword{internal}
