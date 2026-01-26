@@ -33,7 +33,7 @@ LinkingTo:
 Suggests:
     testthat (>= 3.0.0),
     knitr,
-    rmarkdown
+    rmarkdown,
     mlbench
 VignetteBuilder: knitr
 URL: https://github.com/corradinigiovanni/bootei
