@@ -1,6 +1,6 @@
 Package: bootei
 Type: Package
-Title: Bootstrap Ensemble Tie-Breaking for Permutation Tests
+Title: Bootstrap Ensemble Inference for Permutation Tests
 Version: 0.1.0
 Authors@R: 
     person(
@@ -9,27 +9,33 @@ Authors@R:
         role = c("aut", "cre"),
         email = "corradini@leibniz-bips.de"
     )
-Description: Implements Bootstrap Ensemble Inference (BOOTEI), a generic refinement
-    for discrete permutation tests in low-resolution settings such as small sample
-    sizes, sparse contingency tables, few outcome levels, and pervasive ties.
-    The method preserves the original permutation test statistic and augments it
-    with a bootstrap ensemble score used solely for deterministic tie-breaking
-    in the permutation reference distribution. By reusing a fixed bootstrap plan
-    across permutations, BOOTEI retains finite-sample validity under exchangeability
-    and produces permutation p-values that are never larger than those obtained
-    from the classical permutation test.
+Description: Implements BOOTstrap Ensemble Inference (BOOTEI), a refinement for
+    discrete permutation tests in low-resolution regimes such as small samples,
+    sparse contingency tables, few outcome levels, and pervasive ties. The method
+    preserves the original permutation test statistic and augments it with a
+    bootstrap ensemble score used solely for deterministic tie-breaking in the
+    permutation reference distribution. By reusing a fixed resampling plan across
+    permutations (coupling), BOOTEI retains finite-sample validity under
+    exchangeability and yields permutation p-values that are never larger than
+    those from the classical permutation test. The package provides permutation
+    tests for chi-squared independence, Spearman correlation, Mann-Whitney, and
+    Kruskal-Wallis statistics with optional classical behavior when B <= 1.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Depends:
     R (>= 3.6.0)
 Imports:
+    Rcpp (>= 1.0.10),
     stats
+LinkingTo:
+    Rcpp
 Suggests:
     testthat (>= 3.0.0),
     knitr,
     rmarkdown
 VignetteBuilder: knitr
-RoxygenNote: 7.3.2
-URL: https://github.com/USERNAME/bootei
+URL: https://github.com/corradinigiovanni/bootei
 BugReports: https://github.com/corradinigiovanni/bootei/issues
+RoxygenNote: 7.3.2
+SystemRequirements: C++17
