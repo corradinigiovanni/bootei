@@ -40,7 +40,10 @@ We use the `Soybean` dataset from the `mlbench` package.
 
 ```{r data}
 library(bootei)
-library(mlbench)
+
+if (!requireNamespace("mlbench", quietly = TRUE)) {
+  stop("Package 'mlbench' is required for this vignette. Install it with install.packages('mlbench').")
+}
 
 data("Soybean", package = "mlbench")
 
