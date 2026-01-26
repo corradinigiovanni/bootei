@@ -19,6 +19,12 @@ remotes::install_github("corradinigiovanni/bootei")
 library(bootei)
 ```
 
+# Build vignettes
+```r
+remotes::install_github("corradinigiovanni/bootei", build_vignettes = TRUE)
+```
+
+
 ## Examples (classical vs BOOTEI)
 
 Classical permutation: `B = 1`  
