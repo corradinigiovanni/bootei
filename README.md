@@ -19,7 +19,7 @@ remotes::install_github("corradinigiovanni/bootei")
 library(bootei)
 ```
 
-# Vignette
+## Vignette
 To install **bootei** *including vignettes*, use:
 ```r
 remotes::install_github("corradinigiovanni/bootei", build_vignettes = TRUE)
