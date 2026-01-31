@@ -19,11 +19,15 @@ remotes::install_github("corradinigiovanni/bootei")
 library(bootei)
 ```
 
-# Build vignettes
+# Vignette
+To install **bootei** *including vignettes*, use:
 ```r
 remotes::install_github("corradinigiovanni/bootei", build_vignettes = TRUE)
 ```
-
+Then you can open the vignette in R with:
+```r
+vignette("soybean", package = "bootei")
+```
 
 ## Examples (classical vs BOOTEI)
 
@@ -32,7 +36,7 @@ BOOTEI tie-breaking: `B > 1` (e.g., `B = 200`)
 
 These toy examples use *discrete or ordinal data* to induce many ties under permutations,
 a setting in which BOOTEI deterministically refines the permutation ordering and
-yields p-values that are never larger than the corresponding classical permutation p-values.
+yields p-values that are never larger (but still valid) than the corresponding classical permutation p-values.
 
 ### 1) Chi-square (categorical)
 
@@ -95,14 +99,10 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 
 ```
 
-## Vignettes
-
-An introductory vignette illustrating the use of BOOTEI on the Soybean dataset
-is available via `browseVignettes("bootei")`.
 
 ## Notes
 
-- `R` = number of Monte Carlo permutations (increase for final runs).
+- `R` = number of Monte Carlo permutations.
 - `B > 1` activates BOOTEI tie-breaking; `B = 1` is classical permutation (optional `midp = TRUE`).
 - `boot_type`: `"sobol"`, `"sobol_shift"`, `"efron"`.
 - Use `perm_seed` for reproducibility.
