@@ -1,13 +1,13 @@
 #' BOOTEI permutation tests with coupled bootstrap tie-breaking
 #'
 #' @param x,y Inputs (see README).
-#' @param test One of "chisq", "mannwhitney", "spearman", "kruskalwallis".
+#' @param test One of "chisq", "mannwhitney", "spearman", "kruskalwallis", "welch".
 #' @param B Number of bootstrap replicates (B <= 1 gives classical permutation p-value).
 #' @param R Number of permutations.
 #' @param alternative "two.sided", "greater", or "less".
 #' @param perm_seed Optional seed used ONLY inside bootei (does not affect caller RNG).
 #' @param midp Logical; mid-p correction (only used when B <= 1).
-#' @param boot_type "sobol", "sobol_shift", or "efron".
+#' @param boot_type "sobol" or "efron".
 #' @param keep_perm_stats Logical; keep permutation stats.
 #' @export
 bootei <- function(x, y,
