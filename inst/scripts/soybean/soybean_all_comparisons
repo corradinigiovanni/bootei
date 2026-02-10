@@ -13,8 +13,6 @@
 ## ===============================================================
 
 ## ----------------- compile / load -----------------
-# install.packages("remotes")
-# remotes::install_github("corradinigiovanni/bootei")  
 library(bootei)
 library(mlbench)
 data("Soybean", package = "mlbench")
@@ -389,7 +387,7 @@ top_chi2 <- top_improvements(df_chi2, k = 20, pperm_max = pperm_max)
 ## Save results
 ## ===============================================================
 
-out_dir <- "."
+out_dir <- "/media/data/corradini/prove_bootei/soybean/"
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 saveRDS(
@@ -412,5 +410,135 @@ saveRDS(
       p_upper = p_upper
     )
   ),
-  file = file.path(out_dir, "bootei_soybean_all_comparisons_results.rds")
+  file = file.path(out_dir, "bootei_soybean_results.rds")
 )
+
+
+##################################################################
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# ---- load results ----
+in_dir <- "/media/data/corradini/prove_bootei/soybean/"
+res <- readRDS(file.path(in_dir, "bootei_soybean_results.rds"))
+
+df_mw   <- res$df_mw
+df_chi2 <- res$df_chi2
+
+# ---- build long df (p_perm vs p_bootei), keep finite ----
+mk_long <- function(df, test_name) {
+  df %>%
+    transmute(
+      test = test_name,
+      p_perm   = as.numeric(p_perm),
+      p_bootei = as.numeric(p_bootei)
+    ) %>%
+    pivot_longer(cols = c(p_perm, p_bootei), names_to = "method", values_to = "p") %>%
+    dplyr::filter(is.finite(p)) %>%
+    dplyr::mutate(
+      method = recode(method, p_perm = "Permutation", p_bootei = "BOOTEI"),
+      method = factor(method, levels = c("Permutation", "BOOTEI")),
+      test   = factor(test, levels = c("Mann–Whitney", "Chi-square"))
+    )
+}
+
+p_long <- bind_rows(
+  mk_long(df_mw, "Mann–Whitney"),
+  mk_long(df_chi2, "Chi-square")
+)
+
+# ---- 4 boxplots: linear + log scale (2 panels) ----
+p_lin <- ggplot(p_long, aes(x = method, y = p)) +
+  geom_boxplot(outlier.alpha = 0.25) +
+  facet_grid(test ~ method, scales = "free_y") +
+  labs(x = NULL, y = "p-value", title = "P-value distributions (Permutation vs BOOTEI)") +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0),
+    plot.title = element_text(face = "bold", hjust = 0)
+  )
+
+p_log <- ggplot(p_long, aes(x = method, y = p)) +
+  geom_boxplot(outlier.alpha = 0.25) +
+  facet_grid(test ~ method, scales = "free_y") +
+  scale_y_log10() +
+  labs(x = NULL, y = "p-value (log10)", title = "P-value distributions (log scale)") +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0),
+    plot.title = element_text(face = "bold", hjust = 0)
+  )
+
+p_lin
+p_log
+
+
+
+# p_long deve avere: test, method (Permutation/BOOTEI), p
+
+# ---- wide: una riga per caso, due colonne di p-value ----
+p_wide <- p_long %>%
+  dplyr::select(test, method, p) %>%
+  dplyr::group_by(test, method) %>% 
+  # (di solito non serve, ma protegge se ci fossero duplicati accidentali)
+  dplyr::mutate(row_id = row_number()) %>%
+  ungroup() %>%
+  pivot_wider(
+    names_from  = method,
+    values_from = p
+  ) %>%
+  dplyr::filter(is.finite(Permutation), is.finite(BOOTEI)) %>%
+  dplyr::mutate(
+    test = factor(test, levels = c("Mann–Whitney", "Chi-square"))
+  )
+
+# ---- scatter (scala lineare) ----
+g_scatter <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_point(alpha = 0.35, size = 1.6) +
+  facet_wrap(~ test, ncol = 2) +
+  coord_equal() +
+  labs(
+    x = "Permutation p-value",
+    y = "BOOTEI p-value",
+    title = "BOOTEI vs Permutation (per test)",
+    subtitle = "Linea tratteggiata: y = x"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0)
+  )
+
+g_scatter
+
+# ---- scatter (scala log10, di solito più informativa per p-value) ----
+g_scatter_log <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_point(alpha = 0.35, size = 1.6) +
+  facet_wrap(~ test, ncol = 2) +
+  scale_x_log10() +
+  scale_y_log10() +
+  coord_equal() +
+  labs(
+    x = "Permutation p-value (log10)",
+    y = "BOOTEI p-value (log10)",
+    title = "BOOTEI vs Permutation (per test, log scale)",
+    subtitle = "Linea tratteggiata: y = x"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0)
+  )
+
+g_scatter_log
+
