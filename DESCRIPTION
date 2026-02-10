@@ -18,7 +18,7 @@ Description: Implements BOOTstrap Ensemble Inference (BOOTEI), a refinement for
     permutations (coupling), BOOTEI retains finite-sample validity under
     exchangeability and yields permutation p-values that are never larger than
     those from the classical permutation test. The package provides permutation
-    tests for chi-squared independence, Spearman correlation, Mann-Whitney, and
+    tests for chi-squared independence, Welch t-test, Spearman correlation, Mann-Whitney, and
     Kruskal-Wallis statistics with optional classical behavior when B <= 1.
 License: MIT + file LICENSE
 Encoding: UTF-8
