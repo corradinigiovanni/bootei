@@ -1,66 +1,13 @@
-## ===============================================================
-## BOOTEI vs Classical Permutation vs mid-p on Soybean (mlbench)
-## Article-explanatory (aligned with simulations): ONLY
-##   - Mann–Whitney: between TWO classes, SAME variable (standard)
-##   - Chi-square: within-class, variable pairs (ALLOW 2x2),
-##                 droplevels() on x,y AFTER removing NA pairs
-##
-## Keep / summarise only cases with classical permutation p-value p_perm < pperm_max.
-## Extra summary (within kept set): count cases with p_perm > 0.05 AND p_bootei < 0.05.
-##
-## Also export the actual "crossing" cases with class/variable names, so you can
-## pick examples and rerun the manual tests.
-## ===============================================================
-
 ## ----------------- compile / load -----------------
-# install.packages("remotes")
-# remotes::install_github("corradinigiovanni/bootei")  
-library(bootei)
 
+library(bootei)
 library(mlbench)
 data("Soybean", package = "mlbench")
 
 dd <- Soybean
-dd$Class <- droplevels(dd$Class)  # ONLY for stable class indexing
+dd$Class <- droplevels(dd$Class)          
 classes  <- levels(dd$Class)
-G        <- length(classes)
 
-## ----------------- global settings -----------------
-alpha     <- 0.05
-pperm_max <- 0.10
-
-## permutation budgets
-R_mw   <- 5000L
-R_chi2 <- 5000L
-
-## BOOTEI budget
-B_big <- 200L
-
-## bootstrap plan type used by BOOTEI layer
-boot_type <- "sobol"   # "sobol" | "sobol_shift" | "efron"
-
-## optional prescreen (skip BOOTEI unless p_perm is near alpha)
-do_prescreen <- FALSE
-p_upper      <- 0.10
-
-## constraints
-n_min_paired   <- 9L
-n_min_unpaired <- 5L
-
-## columns
-class_col     <- which(names(dd) == "Class")
-attr_cols_all <- setdiff(seq_len(ncol(dd)), class_col)
-
-## MW: scan all attributes (non-Class); only those that convert to numeric will survive filters
-attr_cols_mw <- attr_cols_all
-
-## Chi-square: keep only categorical-like columns (factor/character)
-is_cat_col <- function(z) is.factor(z) || is.character(z)
-attr_cols_chi2 <- attr_cols_all[vapply(dd[attr_cols_all], is_cat_col, logical(1))]
-
-## ----------------- helpers -----------------
-
-## MW: robust numeric conversion (prevents per-class factor recoding artifacts)
 to_numeric_ordinal <- function(z) {
   if (is.factor(z) || is.character(z)) {
     suppressWarnings(as.numeric(as.character(z)))
@@ -69,349 +16,69 @@ to_numeric_ordinal <- function(z) {
   }
 }
 
-## rule for MW:
-## - both samples have >=2 unique values
-## - at least one has >=3 unique values
-ok_uniques_two_vars <- function(x, y) {
-  ux <- length(unique(x))
-  uy <- length(unique(y))
-  (ux >= 2 && uy >= 2 && max(ux, uy) >= 3)
-}
-
-## chi-square: allow ALSO 2x2, so require >=2 levels each
-ok_uniques_chi2 <- function(x, y) {
-  ux <- length(unique(as.character(x)))
-  uy <- length(unique(as.character(y)))
-  (ux >= 2 && uy >= 2)
-}
-
-## categorical prep for chi2: factorize + droplevels AFTER NA filtering
 prep_cat <- function(z) {
   if (is.factor(z)) droplevels(z) else droplevels(factor(z))
 }
 
-## deterministic seed helper
-seed_from <- function(int_vec) {
-  v <- as.integer(int_vec)
-  v <- v[!is.na(v)]
-  if (length(v) == 0) return(1L)
-  w <- c(1L, 97L, 997L, 9973L, 99991L, 1000003L, 10000019L)
-  ww <- w[seq_len(min(length(w), length(v)))]
-  s <- sum(v[seq_along(ww)] * ww)
-  s <- as.integer(s %% 2147483647L)
-  if (is.na(s) || s <= 0L) s <- 1L
-  s
-}
+########################################################
+######################--- Chi-square ---################
+########################################################
 
-## wrapper: compute p_perm (add-one), p_midp, and p_bootei
-run_three_pvals <- function(x, y, test, seed, R, B, alternative = "two.sided") {
+sub <- dd[dd$Class == classes[3], , drop = FALSE]
 
-  base <- bootei(
-    x, y,
-    test            = test,
-    B               = 1L,
-    R               = as.integer(R),
-    alternative     = alternative,
-    perm_seed       = as.integer(seed),
-    midp            = FALSE,
-    boot_type       = boot_type,
-    keep_perm_stats = FALSE
-  )
+x0 <- sub[[3]]
+y0 <- sub[[31]]
 
-  mid <- bootei(
-    x, y,
-    test            = test,
-    B               = 1L,
-    R               = as.integer(R),
-    alternative     = alternative,
-    perm_seed       = as.integer(seed),
-    midp            = TRUE,
-    boot_type       = boot_type,
-    keep_perm_stats = FALSE
-  )
+ok <- !(is.na(x0) | is.na(y0))
+x  <- prep_cat(x0[ok])     
+y  <- prep_cat(y0[ok])
 
-  p_perm <- unname(base$p.value)
-  p_midp <- unname(mid$p.value)
+tab_xy <- table(x, y)
+print(tab_xy)
 
-  if (do_prescreen) {
-    if (is.na(p_perm) || !(p_perm > alpha && p_perm < p_upper)) {
-      return(list(p_perm = p_perm, p_midp = p_midp, p_bootei = NA_real_))
-    }
-  }
+p_perm_chi2 <- bootei(
+  x, y,
+  B = 1L, R = 5000L, perm_seed = 910L,
+  test = "chisq"
+)$p.value
 
-  bt <- bootei(
-    x, y,
-    test            = test,
-    B               = as.integer(B),
-    R               = as.integer(R),
-    alternative     = alternative,
-    perm_seed       = as.integer(seed),
-    boot_type       = boot_type,
-    keep_perm_stats = FALSE
-  )
+p_bootei_chi2 <- bootei(
+  x, y,
+  B = 200L, R = 5000L, perm_seed = 910L,
+  test = "chisq"
+)$p.value
 
-  list(p_perm = p_perm, p_midp = p_midp, p_bootei = unname(bt$p.value))
-}
+p_perm_chi2 # 0.07258548
+p_bootei_chi2 # 0.03379324
 
-summarise_results <- function(df, alpha = 0.05, pperm_max = 0.10) {
 
-  df <- df[!is.na(df$p_perm) & df$p_perm < pperm_max, , drop = FALSE]
+######################################################
+######################--- t-test ---#############
+######################################################
 
-  both_bp  <- !is.na(df$p_bootei) & !is.na(df$p_perm)
-  both_bm  <- !is.na(df$p_bootei) & !is.na(df$p_midp)
-  both_all <- !is.na(df$p_bootei) & !is.na(df$p_perm) & !is.na(df$p_midp)
 
-  ssum <- function(x) if (length(x) == 0) 0L else sum(x, na.rm = TRUE)
+x <- to_numeric_ordinal(dd[dd$Class == classes[3], 9])
+y <- to_numeric_ordinal(dd[dd$Class == classes[4], 9])
 
-  data.frame(
-    n_total        = nrow(df),
-    n_perm_nonNA   = sum(!is.na(df$p_perm)),
-    n_midp_nonNA   = sum(!is.na(df$p_midp)),
-    n_bootei_nonNA = sum(!is.na(df$p_bootei)),
+x <- x[!is.na(x)]
+y <- y[!is.na(y)]
 
-    bootei_lt_perm = ssum(df$p_bootei[both_bp] <  df$p_perm[both_bp]),
-    bootei_eq_perm = ssum(df$p_bootei[both_bp] == df$p_perm[both_bp]),
-    bootei_gt_perm = ssum(df$p_bootei[both_bp] >  df$p_perm[both_bp]),
+c(nx = length(x), ny = length(y))
+c(uniq_x = length(unique(x)), uniq_y = length(unique(y)))
 
-    bootei_lt_midp = ssum(df$p_bootei[both_bm] <  df$p_midp[both_bm]),
-    bootei_eq_midp = ssum(df$p_bootei[both_bm] == df$p_midp[both_bm]),
-    bootei_gt_midp = ssum(df$p_bootei[both_bm] >  df$p_midp[both_bm]),
+p_perm_t <- bootei(
+  x, y,
+  B = 1L, R = 5000L, perm_seed = 910L,
+  test = "welch"
+)$p.value
 
-    bootei_lt_both = ssum(df$p_bootei[both_all] < pmin(df$p_perm[both_all], df$p_midp[both_all])),
+p_bootei_t <- bootei(
+  x, y,
+  B = 200L, R = 5000L, perm_seed = 910L,
+  test = "welch"
+)$p.value
 
-    cross_alpha_perm = ssum(df$p_perm[both_bp] > alpha & df$p_bootei[both_bp] <= alpha),
-    cross_alpha_midp = ssum(df$p_midp[both_bm] > alpha & df$p_bootei[both_bm] <= alpha),
+p_perm_t # 0.05858828
+p_bootei_t # 0.04239152
 
-    stringsAsFactors = FALSE
-  )
-}
 
-summarise_cross_sig <- function(df, alpha = 0.05, pperm_max = 0.10) {
-  df <- df[!is.na(df$p_perm) & df$p_perm < pperm_max, , drop = FALSE]
-  ok <- !is.na(df$p_perm) & !is.na(df$p_bootei)
-  data.frame(
-    n_total_kept = nrow(df),
-    n_cross_perm_gt_alpha_bootei_lt_alpha =
-      sum(df$p_perm[ok] > alpha & df$p_bootei[ok] < alpha),
-    stringsAsFactors = FALSE
-  )
-}
-
-top_improvements <- function(df, k = 20, pperm_max = 0.10) {
-  df2 <- df[!is.na(df$p_perm) & df$p_perm < pperm_max & !is.na(df$p_bootei), , drop = FALSE]
-  if (nrow(df2) == 0) return(df2)
-  df2$delta_perm <- df2$p_perm - df2$p_bootei
-  df2 <- df2[order(-df2$delta_perm), , drop = FALSE]
-  head(df2, k)
-}
-
-## ===============================================================
-## 1) MANN–WHITNEY (standard): TWO classes, SAME variable
-##    - only cl1 < cl2 (unique class pairs)
-##    - no droplevels() on the variable before numeric conversion
-## ===============================================================
-
-df_mw <- list()
-kk <- 0L
-
-for (cl1 in 1:(G - 1)) {
-  for (cl2 in (cl1 + 1):G) {
-
-    idx1 <- (dd$Class == classes[cl1])
-    idx2 <- (dd$Class == classes[cl2])
-
-    for (i in attr_cols_mw) {
-
-      x <- to_numeric_ordinal(dd[idx1, i])
-      y <- to_numeric_ordinal(dd[idx2, i])
-
-      x <- x[!is.na(x)]
-      y <- y[!is.na(y)]
-
-      if (length(x) < n_min_unpaired || length(y) < n_min_unpaired) next
-      if (!ok_uniques_two_vars(x, y)) next
-
-      seme <- seed_from(c(200L, cl1, cl2, i))
-
-      rr <- run_three_pvals(
-        x, y, test = "mannwhitney",
-        seed = seme, R = R_mw, B = B_big,
-        alternative = "two.sided"
-      )
-
-      if (!is.na(rr$p_perm) && rr$p_perm < pperm_max) {
-        kk <- kk + 1L
-        df_mw[[kk]] <- data.frame(
-          test   = "mannwhitney",
-          class1 = as.character(classes[cl1]),
-          class2 = as.character(classes[cl2]),
-          i      = i,
-          var    = names(dd)[i],
-          n1     = length(x),
-          n2     = length(y),
-          uniq_1 = length(unique(x)),
-          uniq_2 = length(unique(y)),
-          p_perm   = rr$p_perm,
-          p_midp   = rr$p_midp,
-          p_bootei = rr$p_bootei,
-          seed = seme,
-          stringsAsFactors = FALSE
-        )
-      }
-    }
-  }
-}
-
-df_mw <- if (length(df_mw) > 0) do.call(rbind, df_mw) else data.frame()
-rownames(df_mw) <- NULL
-
-## ===============================================================
-## 2) CHI-SQUARE (standard): within class, variable pairs (ALLOW 2x2)
-##    - remove NA pairs, THEN droplevels() on x,y
-## ===============================================================
-
-df_chi2 <- list()
-kk <- 0L
-
-for (cl in seq_len(G)) {
-
-  sub <- dd[dd$Class == classes[cl], , drop = FALSE]
-
-  if (length(attr_cols_chi2) < 2) next
-
-  for (a in seq_along(attr_cols_chi2)) {
-    for (b in seq_along(attr_cols_chi2)) {
-      if (b <= a) next
-
-      i <- attr_cols_chi2[a]
-      j <- attr_cols_chi2[b]
-
-      x0 <- sub[[i]]
-      y0 <- sub[[j]]
-
-      ok <- !(is.na(x0) | is.na(y0))
-      if (sum(ok) < n_min_paired) next
-
-      x <- prep_cat(x0[ok])   # droplevels AFTER NA removal
-      y <- prep_cat(y0[ok])
-
-      if (length(x) < n_min_paired) next
-      if (!ok_uniques_chi2(x, y)) next
-
-      seme <- seed_from(c(300L, cl, i, j))
-
-      rr <- run_three_pvals(
-        x, y, test = "chisq",
-        seed = seme, R = R_chi2, B = B_big,
-        alternative = "two.sided"
-      )
-
-      if (!is.na(rr$p_perm) && rr$p_perm < pperm_max) {
-        kk <- kk + 1L
-        df_chi2[[kk]] <- data.frame(
-          test   = "chisq",
-          class  = as.character(classes[cl]),
-          i = i, j = j,
-          var_i  = names(dd)[i],
-          var_j  = names(dd)[j],
-          n      = length(x),
-          uniq_i = nlevels(x),
-          uniq_j = nlevels(y),
-          p_perm   = rr$p_perm,
-          p_midp   = rr$p_midp,
-          p_bootei = rr$p_bootei,
-          seed = seme,
-          stringsAsFactors = FALSE
-        )
-      }
-    }
-  }
-}
-
-df_chi2 <- if (length(df_chi2) > 0) do.call(rbind, df_chi2) else data.frame()
-rownames(df_chi2) <- NULL
-
-## ===============================================================
-## Summaries (per test) — restricted to p_perm < pperm_max
-## ===============================================================
-
-sum_mw   <- summarise_results(df_mw,   alpha, pperm_max)
-sum_chi2 <- summarise_results(df_chi2, alpha, pperm_max)
-
-summary_all <- rbind(
-  cbind(test = "mannwhitney", sum_mw),
-  cbind(test = "chisq",       sum_chi2)
-)
-rownames(summary_all) <- NULL
-print(summary_all)
-
-## ===============================================================
-## Extra summary: p_perm > 0.05 AND p_bootei < 0.05
-## (computed within the kept set p_perm < pperm_max)
-## ===============================================================
-
-cross_mw   <- summarise_cross_sig(df_mw,   alpha, pperm_max)
-cross_chi2 <- summarise_cross_sig(df_chi2, alpha, pperm_max)
-
-cross_all <- rbind(
-  cbind(test = "mannwhitney", cross_mw),
-  cbind(test = "chisq",       cross_chi2)
-)
-rownames(cross_all) <- NULL
-print(cross_all)
-
-## ===============================================================
-## Export the ACTUAL crossing cases (so you can pick examples)
-## ===============================================================
-
-mw_kept   <- df_mw[!is.na(df_mw$p_perm)   & df_mw$p_perm   < pperm_max, , drop = FALSE]
-chi2_kept <- df_chi2[!is.na(df_chi2$p_perm) & df_chi2$p_perm < pperm_max, , drop = FALSE]
-
-cross_cases_mw <- mw_kept[!is.na(mw_kept$p_bootei) &
-                            mw_kept$p_perm > alpha &
-                            mw_kept$p_bootei < alpha, , drop = FALSE]
-
-cross_cases_chi2 <- chi2_kept[!is.na(chi2_kept$p_bootei) &
-                                chi2_kept$p_perm > alpha &
-                                chi2_kept$p_bootei < alpha, , drop = FALSE]
-
-## quick look
-print(head(cross_cases_mw, 10))
-print(head(cross_cases_chi2, 10))
-
-## ===============================================================
-## Top improvements (largest p_perm - p_bootei), restricted to kept set
-## ===============================================================
-
-top_mw   <- top_improvements(df_mw,   k = 20, pperm_max = pperm_max)
-top_chi2 <- top_improvements(df_chi2, k = 20, pperm_max = pperm_max)
-
-## ===============================================================
-## Save results
-## ===============================================================
-
-out_dir <- "--"
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-
-saveRDS(
-  list(
-    df_mw            = df_mw,
-    df_chi2          = df_chi2,
-    summary_all      = summary_all,
-    cross_all        = cross_all,
-    cross_cases_mw   = cross_cases_mw,
-    cross_cases_chi2 = cross_cases_chi2,
-    top_mw           = top_mw,
-    top_chi2         = top_chi2,
-    settings = list(
-      alpha = alpha, pperm_max = pperm_max,
-      R_mw = R_mw, R_chi2 = R_chi2,
-      B_big = B_big, boot_type = boot_type,
-      n_min_paired = n_min_paired,
-      n_min_unpaired = n_min_unpaired,
-      do_prescreen = do_prescreen,
-      p_upper = p_upper
-    )
-  ),
-  file = file.path(out_dir, "bootei_soybean_results.rds")
-)
