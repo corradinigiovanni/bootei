@@ -1,7 +1,7 @@
 // =====================================================================
 //  BOOTEI – Bootstrap Ensemble Inference with lexicographic tie-breaking
 //
-//  Implements χ², Spearman, Mann–Whitney, Kruskal–Wallis using:
+//  Implements χ², Spearman, Mann–Whitney, Kruskal–Wallis, Welch t-test using:
 //
 //    Primary statistic: T†(Z)
 //      - one-sided:   T† = T
@@ -19,11 +19,10 @@
 //  Key implementation point (paper-aligned):
 //    - Fix resampling keys W once (Sobol/QMC indices or Efron indices).
 //    - Reuse the same keys across permutations (coupling).
-//    - For sobol_shift, draw one shift once, then keys are fixed.
 //
 //  Features retained from your engine:
 //    - B <= 1: classical permutation p-value (optional midp).
-//    - boot_type: "sobol" | "sobol_shift" | "efron"
+//    - boot_type: "sobol" | "efron"
 //    - perm_seed, keep_perm_stats.
 //    - For BOOTEI, tie-breaker computed only when needed (ties).
 //
@@ -97,22 +96,19 @@ private:
 // -------------------------------------------------------------------
 enum BootType {
   BOOT_SOBOL = 0,
-  BOOT_SOBOL_SHIFT = 1,
   BOOT_EFRON = 2
 };
 
 inline BootType parse_boot_type(const std::string &type) {
   if (type == "sobol") return BOOT_SOBOL;
-  if (type == "sobol_shift") return BOOT_SOBOL_SHIFT;
   if (type == "efron") return BOOT_EFRON;
-  stop("boot_type must be 'sobol', 'sobol_shift', or 'efron'");
+  stop("boot_type must be 'sobol' or 'efron'");
   return BOOT_SOBOL;
 }
 
 inline std::string describe_boot_type(BootType bt) {
   switch (bt) {
   case BOOT_SOBOL:       return "Sobol QMC (no shift)";
-  case BOOT_SOBOL_SHIFT: return "Sobol QMC (random digital shift)";
   case BOOT_EFRON:       return "Efron bootstrap";
   default:               return "Unknown bootstrap";
   }
@@ -222,7 +218,7 @@ double chisq_from_pairs_int(const IntegerVector &row_idx,
 }
 
 // -------------------------------------------------------------------
-// Spearman, Mann–Whitney, Kruskal–Wallis
+// Spearman, Mann–Whitney, Kruskal–Wallis, Welch t-test
 // -------------------------------------------------------------------
 double spearman_raw(const NumericVector &x, const NumericVector &y){
   int n = x.size();
@@ -260,6 +256,40 @@ double mannwhitney_raw_U(const NumericVector &x, const NumericVector &y){
     if (grp[i] == 0) R1 += rk[i];
   }
   return R1 - (double)nx * (nx + 1) / 2.0;
+}
+
+double welch_t_raw(const NumericVector &x, const NumericVector &y){
+  int nx = x.size(), ny = y.size();
+  if (nx < 2 || ny < 2) return NA_REAL;
+
+  double mx = 0.0, my = 0.0;
+  for (int i = 0; i < nx; ++i) {
+    if (NumericVector::is_na(x[i])) return NA_REAL;
+    mx += x[i];
+  }
+  for (int j = 0; j < ny; ++j) {
+    if (NumericVector::is_na(y[j])) return NA_REAL;
+    my += y[j];
+  }
+  mx /= (double)nx;
+  my /= (double)ny;
+
+  double vx = 0.0, vy = 0.0;
+  for (int i = 0; i < nx; ++i) {
+    double dx = x[i] - mx;
+    vx += dx * dx;
+  }
+  for (int j = 0; j < ny; ++j) {
+    double dy = y[j] - my;
+    vy += dy * dy;
+  }
+  vx /= (double)(nx - 1);
+  vy /= (double)(ny - 1);
+
+  double se2 = vx / (double)nx + vy / (double)ny;
+  if (se2 <= 0.0) return NA_REAL;
+
+  return (mx - my) / std::sqrt(se2);
 }
 
 std::function<double(const NumericVector&, const IntegerVector&)>
@@ -498,7 +528,7 @@ double bagged_chisq_Tdag_int(const IntegerVector &row_idx,
   return acc / (double)ok;
 }
 
-// Unpaired bagging (Mann–Whitney)
+// Unpaired bagging (Mann–Whitney, Welch t-test)
 double bagged_unpaired_Tdag(const NumericVector &x,
                             const NumericVector &y,
                             const std::function<double(const NumericVector&, const NumericVector&)> &raw_statfn,
@@ -1008,10 +1038,6 @@ List bootei_cpp(SEXP x, SEXP y,
 
     // shifts for sobol_shift (fixed once)
     double shift = 0.0;
-    if (btype == BOOT_SOBOL_SHIFT) {
-      RNGScope scope;
-      shift = R::runif(0.0, 1.0);
-    }
 
     // observed raw + primary
     double Traw0 = chisq_from_pairs_int(row_idx, col_idx, nr, nc);
@@ -1078,10 +1104,6 @@ List bootei_cpp(SEXP x, SEXP y,
 
     // shifts
     double shift = 0.0;
-    if (btype == BOOT_SOBOL_SHIFT) {
-      RNGScope scope;
-      shift = R::runif(0.0, 1.0);
-    }
 
     double Traw0 = raw_statfn(xn, yn);
     double T0    = T_dagger(Traw0, alternative, ref);
@@ -1143,11 +1165,6 @@ List bootei_cpp(SEXP x, SEXP y,
     const double ref = (double)x1.size() * (double)y1.size() / 2.0;
 
     double shift_x = 0.0, shift_y = 0.0;
-    if (btype == BOOT_SOBOL_SHIFT) {
-      RNGScope scope;
-      shift_x = R::runif(0.0, 1.0);
-      shift_y = R::runif(0.0, 1.0);
-    }
 
     double Traw0 = raw_statfn(x1, y1);
     double T0    = T_dagger(Traw0, alternative, ref);
@@ -1197,6 +1214,67 @@ List bootei_cpp(SEXP x, SEXP y,
   }
 
   // ---------------------------------------------------------------
+  // Welch t-test (unpaired)
+  // ---------------------------------------------------------------
+  if (test == "welch") {
+    NumericVector x1(x), y1(y);
+
+    auto raw_statfn = [](const NumericVector &a, const NumericVector &b){
+      return welch_t_raw(a, b);
+    };
+
+    const double ref = 0.0;
+
+    double shift_x = 0.0, shift_y = 0.0;
+
+    double Traw0 = raw_statfn(x1, y1);
+    double T0    = T_dagger(Traw0, alternative, ref);
+
+    NumericVector perm_primary, perm_tie;
+
+    if (B <= 1) {
+      double pval = perm_classical_unpaired(x1, y1, raw_statfn, T0, R, alternative, ref,
+                                            midp, keep_perm_stats, perm_primary);
+
+      List out = List::create(
+        _["statistic_raw"] = Traw0,
+        _["statistic"]     = T0,
+        _["tie_breaker"]   = NA_REAL,
+        _["p.value"]       = pval,
+        _["method"]        = "Permutation Welch t-test (B=1)",
+        _["alternative"]   = alternative
+      );
+      if (keep_perm_stats && perm_primary.size() > 0) out["perm_primary"] = perm_primary;
+      return out;
+    }
+
+    UnpairedKeys K = make_keys_unpaired(x1.size(), y1.size(), B, btype, shift_x, shift_y);
+    double S0 = bagged_unpaired_Tdag(x1, y1, raw_statfn, K, B, alternative, ref);
+
+    double pval = perm_bootei_unpaired(x1, y1, raw_statfn,
+                                       T0, S0, K, B, R,
+                                       alternative, ref,
+                                       keep_perm_stats, perm_primary, perm_tie);
+
+    std::string method_str =
+      "BOOTEI Welch t-test (tie-breaker via " + describe_boot_type(btype) + ")";
+
+    List out = List::create(
+      _["statistic_raw"] = Traw0,
+      _["statistic"]     = T0,
+      _["tie_breaker"]   = S0,
+      _["p.value"]       = pval,
+      _["method"]        = method_str,
+      _["alternative"]   = alternative
+    );
+    if (keep_perm_stats) {
+      if (perm_primary.size() > 0) out["perm_primary"] = perm_primary;
+      if (perm_tie.size() > 0)     out["perm_tie"]     = perm_tie;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------
   // Kruskal–Wallis (paired x + group labels)
   // ---------------------------------------------------------------
   if (test == "kruskalwallis") {
@@ -1211,10 +1289,6 @@ List bootei_cpp(SEXP x, SEXP y,
     const double ref = 0.0;
 
     double shift = 0.0;
-    if (btype == BOOT_SOBOL_SHIFT) {
-      RNGScope scope;
-      shift = R::runif(0.0, 1.0);
-    }
 
     double Traw0 = raw_statfn(xv, gy);
     double T0    = T_dagger(Traw0, alternative, ref);
@@ -1263,6 +1337,6 @@ List bootei_cpp(SEXP x, SEXP y,
     return out;
   }
 
-  stop("Unknown test type. Use 'chisq', 'spearman', 'mannwhitney', or 'kruskalwallis'.");
+  stop("Unknown test type. Use 'chisq', 'spearman', 'mannwhitney', 'welch', or 'kruskalwallis'.");
   return List::create();
 }
