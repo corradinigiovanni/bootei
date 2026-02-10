@@ -387,7 +387,7 @@ top_chi2 <- top_improvements(df_chi2, k = 20, pperm_max = pperm_max)
 ## Save results
 ## ===============================================================
 
-out_dir <- "/media/data/corradini/prove_bootei/soybean/"
+out_dir <- "_"
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 saveRDS(
@@ -421,7 +421,7 @@ library(tidyr)
 library(ggplot2)
 
 # ---- load results ----
-in_dir <- "/media/data/corradini/prove_bootei/soybean/"
+in_dir <- "_"
 res <- readRDS(file.path(in_dir, "bootei_soybean_results.rds"))
 
 df_mw   <- res$df_mw
