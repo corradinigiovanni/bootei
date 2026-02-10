@@ -20,7 +20,7 @@ bootei(
 \arguments{
 \item{x, y}{Inputs (see README).}
 
-\item{test}{One of "chisq", "mannwhitney", "spearman", "kruskalwallis".}
+\item{test}{One of "chisq", "welch","mannwhitney", "spearman", "kruskalwallis".}
 
 \item{B}{Number of bootstrap replicates (B <= 1 gives classical permutation p-value).}
 
@@ -32,7 +32,7 @@ bootei(
 
 \item{midp}{Logical; mid-p correction (only used when B <= 1).}
 
-\item{boot_type}{"sobol", "sobol_shift", or "efron".}
+\item{boot_type}{"sobol", or "efron".}
 
 \item{keep_perm_stats}{Logical; keep permutation stats.}
 }
