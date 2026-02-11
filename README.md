@@ -52,7 +52,22 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 
 ```
 
-### 2) Mann–Whitney (ordinal, ties)
+### 2) Welch t (two-sample, unequal variances)
+
+```r
+x <- sample(c(0,1,2), 5, replace = TRUE)
+y <- sample(c(0,1,2), 5, replace = TRUE)
+
+p_perm   <- bootei::bootei(x, y, test = "welch", B = 1,   R = 5000,
+                           alternative = "two.sided", perm_seed = 910)$p.value
+p_bootei <- bootei::bootei(x, y, test = "welch", B = 200, R = 5000,
+                           alternative = "two.sided", perm_seed = 910,
+                           boot_type = "sobol")$p.value
+c(p_perm = p_perm, p_bootei = p_bootei)
+
+```
+
+### 3) Mann–Whitney (two-sample, ordinal)
 
 ```r
 x <- sample(c(0,1,2), 5, replace = TRUE)
@@ -67,7 +82,7 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 
 ```
 
-### 3) Spearman (rank ties)
+### 4) Spearman (rank correlation)
 
 ```r
 x <- sample(c(0,1,2), 10, replace = TRUE)
@@ -82,7 +97,7 @@ c(p_perm = p_perm, p_bootei = p_bootei)
 
 ```
 
-### 4) Kruskal–Wallis (multiple groups, ties)
+### 5) Kruskal–Wallis (multiple groups, ordinal)
 
 ```r
 g <- factor(rep(c("G1","G2","G3"), each = 5))
