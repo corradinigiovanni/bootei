@@ -114,8 +114,8 @@ p_bootei_chi2
 
 
 ```{r t-example}
-x <- to_numeric_ordinal(dd[dd$Class == classes[15], 10])
-y <- to_numeric_ordinal(dd[dd$Class == classes[19], 10])
+x <- to_numeric_ordinal(dd[dd$Class == classes[3], 9])
+y <- to_numeric_ordinal(dd[dd$Class == classes[4], 9])
 
 x <- x[!is.na(x)]
 y <- y[!is.na(y)]
