@@ -27,7 +27,7 @@ We demonstrate:
 
 1. A Pearson chi-square test of independence within a single disease class
    of the Soybean dataset.
-2. A two-sample Mann--Whitney comparison across two disease classes on an
+2. A two-sample Welch t comparison across two disease classes on an
    ordinally encoded attribute.
 
 We compare the baseline add-one Monte Carlo permutation p-value
@@ -109,11 +109,11 @@ p_bootei_chi2
 ```
 
 
-## Example 2: Mann--Whitney (two-sample comparison across classes)
+## Example 2: Welch t (two-sample comparison across classes)
 
 
 
-```{r mw-example}
+```{r t-example}
 x <- to_numeric_ordinal(dd[dd$Class == classes[15], 10])
 y <- to_numeric_ordinal(dd[dd$Class == classes[19], 10])
 
@@ -125,21 +125,21 @@ c(uniq_x = length(unique(x)), uniq_y = length(unique(y)))
 ```
 
 
-```{r mw-pvalues}
-p_perm_mw <- bootei(
+```{r t-pvalues}
+p_perm_t <- bootei(
   x, y,
   B = 1L, R = 5000L, perm_seed = 910L,
-  test = "mannwhitney"
+  test = "welch"
 )$p.value
 
-p_bootei_mw <- bootei(
+p_bootei_t <- bootei(
   x, y,
   B = 200L, R = 5000L, perm_seed = 910L,
-  test = "mannwhitney"
+  test = "welch"
 )$p.value
 
-p_perm_mw
-p_bootei_mw
+p_perm_t
+p_bootei_t
 ```
 
 
