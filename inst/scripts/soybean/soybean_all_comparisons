@@ -18,9 +18,7 @@ library(mlbench)
 data("Soybean", package = "mlbench")
 
 
-Rcpp::sourceCpp('/media/data/corradini/bootei_t/bootei.cpp')
-source('/media/data/corradini/bootei_t/bootei.R')
-
+library(bootei)
 
 dd <- Soybean
 dd$Class <- droplevels(dd$Class)  # ONLY for stable class indexing
