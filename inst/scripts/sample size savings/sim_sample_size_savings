@@ -1,0 +1,735 @@
+## ================================================================
+## BOOTEI chi^2 – Sample size savings (butyraldehyde inhalation 2-year study; chunked)
+## FIXED-MARGINS (conditional) DGP for 2x2 tables, linear-by-linear (k=2) form
+##
+## Goal:
+##   Estimate sample size savings of BOOTEI vs classical permutation chi^2,
+##   for 2x2 control-vs-dose contrasts derived from Furukawa et al. (2024).
+##
+## Data source (counts used to build observed 2x2 tables):
+##   Furukawa Y. et al. (2024) J. Toxicol. Sci. 49(9):385–398
+##   "Carcinogenicity of butyraldehyde in rats by a two-year inhalation study"
+##
+## What is included:
+##   - All binary endpoints with explicit incidence counts reported in:
+##       * Table 1 (neoplastic lesions)
+##       * Table 2 (selected non-neoplastic lesions)
+##       * Results text: terminal survival counts
+##   - All natural contrasts: 0 ppm vs {300, 1000, 3000} ppm within sex
+##
+## What is excluded (mechanically, no cherry-picking):
+##   1) observed-degenerate 2x2 tables:
+##        - total events = 0  (all-zero event column)
+##        - total events = N  (all-one event column)
+##      because they carry no information for a 2x2 test
+##   2) exact duplicate 2x2 tables (same x0/n0 vs x1/n1), even if they come
+##      from different endpoints/dose/sex; these are collapsed to one scenario
+##   3) historical-control table (Table 3), because it is not a treatment-study
+##      control-vs-dose 2x2 comparison from this experiment
+##
+## Endpoint definition (binary per animal):
+##   lesion/tumor present (1) vs absent (0)
+##   (for survival rows: "alive at terminal sacrifice" = 1 vs not = 0)
+##
+## DGP (fixed margins; linear-by-linear k=2; data-anchored, standard):
+##   For each observed 2x2 scenario (x0/n0 vs x1/n1), define:
+##     p0 = x0/n0, p1 = x1/n1
+##
+##   For each simulated equal-group size n:
+##     - Row margins fixed: n_control = n_treated = n
+##     - Column margin fixed (total events) using observed group rates:
+##         m(n) = round( (p0 + p1) * n )     (since E[events]=n p0 + n p1)
+##       clamped to [0, 2n]
+##     - Association parameter uses linear-by-linear k=2 form:
+##         P(A=a | n,n,m,theta) ∝ choose(n,a) * choose(n,m-a) * exp(theta * a)
+##       where A = treated events.
+##     - theta is calibrated (per n) so that:
+##         E[A | n,n,m(n),theta] ≈ n * p1
+##       i.e., the treated event rate matches the observed p1 under the
+##       conditioning constraint (fixed margins).
+##
+##   This keeps:
+##     - fixed margins (matches permutation conditioning on margins),
+##     - linear-by-linear model family used in BOOTEI simulations (k=2 case),
+##     - and anchoring to the observed control/treatment rates (p0,p1),
+##   without relying on unstable OR plug-ins for rare/zero cells.
+##
+## Degenerate simulated margins:
+##   If m(n) in {0, 2n}, outcome is constant -> keep replicate, set p=1 (no rejection)
+## ================================================================
+
+suppressPackageStartupMessages({
+  library(batchtools)
+  library(dplyr)
+  library(tibble)
+  library(readr)
+  library(bootei)
+})
+
+options(BBmisc.checkTypos = FALSE)
+options(BBmisc.check.typos = FALSE)
+
+ROOT <- "."
+dir.create(ROOT, recursive = TRUE, showWarnings = FALSE)
+
+## -------------------- GLOBAL SETTINGS ----------------------------
+
+alpha        <- 0.05
+power_target <- 0.80
+
+MC_per_n <- 5000L
+
+
+R_power  <- 5000L
+B_power  <- 200L
+
+make_n_grid <- function() {
+  unique(as.integer(c(
+    seq(4, 100, 1),
+    seq(100, 200, 2),
+    seq(200, 500, 5),
+    seq(500, 1000, 10),
+    seq(1000, 2000, 20)
+  )))
+}
+
+N_CORES <- 50L
+chunk_size <- as.integer(ceiling(length(make_n_grid()) / N_CORES))
+
+pin_threads <- function() {
+  invisible(Sys.setenv(
+    OMP_NUM_THREADS = "1",
+    OPENBLAS_NUM_THREADS = "1",
+    MKL_NUM_THREADS = "1",
+    BLIS_NUM_THREADS = "1",
+    VECLIB_MAXIMUM_THREADS = "1",
+    NUMEXPR_NUM_THREADS = "1"
+  ))
+}
+
+bootei_safe_p <- function(x, y, B, R, seed) {
+  tryCatch({
+    bootei::bootei(
+      x = x,
+      y = y,
+      test = "chisq",
+      B = as.integer(B),
+      R = as.integer(R),
+      alternative = "greater",   ## kept as in original script
+      perm_seed = as.integer(seed),
+      midp = FALSE,
+      boot_type = "sobol"
+    )$p.value
+  }, error = function(e) NA_real_)
+}
+
+## -------------------- OBSERVED ENDPOINT COUNTS -------------------
+## Wide endpoint table from Furukawa et al. (2024); counts are "events / examined".
+## We then expand to all natural 2x2 contrasts: 0 ppm vs 300/1000/3000 ppm.
+##
+## Included sources:
+##   - Table 1: neoplastic lesions (all explicit count rows)
+##   - Table 2: selected non-neoplastic lesions (all explicit count rows)
+##   - Results text: terminal survival (alive at end of study)
+##
+## Notes:
+##   - Table 3 (historical controls) intentionally excluded: not this experiment's
+##     control-vs-dose table.
+##   - Some rows are all-zero in one sex and are included here for auditability;
+##     they will be dropped later as observed-degenerate 2x2 tables.
+
+endpoints_wide <- tibble::tribble(
+  ~endpoint_id, ~species, ~sex, ~organ, ~endpoint, ~endpoint_class, ~count_source, ~x0, ~n0, ~x300, ~n300, ~x1000, ~n1000, ~x3000, ~n3000,
+  
+  ## ---------------- RATS (F344/DuCrlCrlj) MALE ----------------
+  ## Terminal survival (Results text, p. 388)
+  "RM_SURV", "rat", "Male", "Whole animal",
+  "Terminal survival (alive at end of study)", "survival",
+  "Results text (terminal survival counts, male)", 32L,50L, 36L,50L, 34L,50L, 31L,50L,
+  
+  ## Table 1 (neoplastic lesions, p. 392)
+  "RM_NAS_SQPAP", "rat", "Male", "Nasal cavity",
+  "Squamous cell papilloma", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  "RM_NAS_SQCAR", "rat", "Male", "Nasal cavity",
+  "Squamous cell carcinoma", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 19L,50L,
+  
+  "RM_NAS_ADSQCAR", "rat", "Male", "Nasal cavity",
+  "Adenosquamous carcinoma", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 1L,50L,
+  
+  "RM_NAS_CARCSAR", "rat", "Male", "Nasal cavity",
+  "Carcinosarcoma", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 1L,50L,
+  
+  "RM_NAS_SARCNOS", "rat", "Male", "Nasal cavity",
+  "Sarcoma NOS", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 1L,50L,
+  
+  "RM_NAS_COMB_BCD", "rat", "Male", "Nasal cavity",
+  "Combined nasal tumors (B + C + D)", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 21L,50L,
+  
+  "RM_LAR_SQCAR", "rat", "Male", "Larynx",
+  "Squamous cell carcinoma", "neoplastic",
+  "Table 1 (neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 1L,50L,
+  
+  ## Table 2 (selected non-neoplastic lesions, p. 393)
+  "RM_NAS_SQMETA_RE", "rat", "Male", "Nasal cavity",
+  "Squamous cell metaplasia: respiratory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 3L,50L, 22L,50L, 49L,50L,
+  
+  "RM_NAS_SQHYP_RE", "rat", "Male", "Nasal cavity",
+  "Squamous cell hyperplasia: respiratory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 30L,50L,
+  
+  "RM_NAS_RHINITIS", "rat", "Male", "Nasal cavity",
+  "Rhinitis", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 35L,50L, 49L,50L,
+  
+  "RM_NAS_HYP_TRANS", "rat", "Male", "Nasal cavity",
+  "Hyperplasia: transitional epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  "RM_NAS_BCHYP_OE", "rat", "Male", "Nasal cavity",
+  "Basal cell hyperplasia: olfactory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 32L,50L, 35L,50L,
+  
+  "RM_NAS_ATR_OE", "rat", "Male", "Nasal cavity",
+  "Atrophy: olfactory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 43L,50L, 39L,50L,
+  
+  "RM_NAS_ADH_TURB", "rat", "Male", "Nasal cavity",
+  "Adhesion: turbinate", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 1L,50L, 13L,50L,
+  
+  "RM_LAR_SQHYP", "rat", "Male", "Larynx",
+  "Squamous cell hyperplasia", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 10L,50L,
+  
+  "RM_TRA_SQHYP", "rat", "Male", "Trachea",
+  "Squamous cell hyperplasia", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 2L,50L,
+  
+  "RM_TRA_SQMETA", "rat", "Male", "Trachea",
+  "Squamous cell metaplasia", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  "RM_LNG_FBI", "rat", "Male", "Lung",
+  "Inflammation with foreign body", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 0L,50L, 1L,50L, 15L,50L,
+  
+  "RM_LNG_EDEMA", "rat", "Male", "Lung",
+  "Edema", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 1L,50L, 1L,50L, 1L,50L, 1L,50L,
+  
+  "RM_EYE_KER", "rat", "Male", "Eye",
+  "Keratitis", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 6L,50L, 22L,50L, 22L,50L,
+  
+  "RM_EYE_CORDEG", "rat", "Male", "Eye",
+  "Degeneration: cornea", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, male)", 0L,50L, 18L,50L, 2L,50L, 0L,50L,
+  
+  ## ---------------- RATS (F344/DuCrlCrlj) FEMALE ----------------
+  ## Terminal survival (Results text, p. 388)
+  "RF_SURV", "rat", "Female", "Whole animal",
+  "Terminal survival (alive at end of study)", "survival",
+  "Results text (terminal survival counts, female)", 33L,50L, 39L,50L, 38L,50L, 22L,50L,
+  
+  ## Table 1 (neoplastic lesions, p. 392)
+  "RF_NAS_SQPAP", "rat", "Female", "Nasal cavity",
+  "Squamous cell papilloma", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 1L,50L,
+  
+  "RF_NAS_SQCAR", "rat", "Female", "Nasal cavity",
+  "Squamous cell carcinoma", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 8L,50L,
+  
+  "RF_NAS_ADSQCAR", "rat", "Female", "Nasal cavity",
+  "Adenosquamous carcinoma", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  "RF_NAS_CARCSAR", "rat", "Female", "Nasal cavity",
+  "Carcinosarcoma", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  "RF_NAS_SARCNOS", "rat", "Female", "Nasal cavity",
+  "Sarcoma NOS", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  "RF_NAS_COMB_AB", "rat", "Female", "Nasal cavity",
+  "Combined nasal tumors (A + B)", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 9L,50L,
+  
+  "RF_LAR_SQCAR", "rat", "Female", "Larynx",
+  "Squamous cell carcinoma", "neoplastic",
+  "Table 1 (neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 0L,50L,
+  
+  ## Table 2 (selected non-neoplastic lesions, p. 393)
+  "RF_NAS_SQMETA_RE", "rat", "Female", "Nasal cavity",
+  "Squamous cell metaplasia: respiratory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 2L,50L, 28L,50L, 48L,50L,
+  
+  "RF_NAS_SQHYP_RE", "rat", "Female", "Nasal cavity",
+  "Squamous cell hyperplasia: respiratory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 16L,50L,
+  
+  "RF_NAS_RHINITIS", "rat", "Female", "Nasal cavity",
+  "Rhinitis", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 16L,50L, 47L,50L,
+  
+  "RF_NAS_HYP_TRANS", "rat", "Female", "Nasal cavity",
+  "Hyperplasia: transitional epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 2L,50L,
+  
+  "RF_NAS_BCHYP_OE", "rat", "Female", "Nasal cavity",
+  "Basal cell hyperplasia: olfactory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 3L,50L, 36L,50L,
+  
+  "RF_NAS_ATR_OE", "rat", "Female", "Nasal cavity",
+  "Atrophy: olfactory epithelium", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 2L,50L, 44L,50L, 39L,50L,
+  
+  "RF_NAS_ADH_TURB", "rat", "Female", "Nasal cavity",
+  "Adhesion: turbinate", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 9L,50L,
+  
+  "RF_LAR_SQHYP", "rat", "Female", "Larynx",
+  "Squamous cell hyperplasia", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 8L,50L,
+  
+  "RF_TRA_SQHYP", "rat", "Female", "Trachea",
+  "Squamous cell hyperplasia", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 2L,50L,
+  
+  "RF_TRA_SQMETA", "rat", "Female", "Trachea",
+  "Squamous cell metaplasia", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 3L,50L,
+  
+  "RF_LNG_FBI", "rat", "Female", "Lung",
+  "Inflammation with foreign body", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 0L,50L, 0L,50L, 0L,50L, 3L,50L,
+  
+  "RF_LNG_EDEMA", "rat", "Female", "Lung",
+  "Edema", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 1L,50L, 1L,50L, 2L,50L, 11L,50L,
+  
+  "RF_EYE_KER", "rat", "Female", "Eye",
+  "Keratitis", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 1L,50L, 12L,50L, 12L,50L, 5L,50L,
+  
+  "RF_EYE_CORDEG", "rat", "Female", "Eye",
+  "Degeneration: cornea", "non_neoplastic",
+  "Table 2 (selected non-neoplastic lesions, female)", 5L,50L, 16L,50L, 11L,50L, 0L,50L
+)
+
+## -------------------- EXPAND TO RAW 2x2 COMBINATIONS -------------
+## Create all natural contrasts: 0 ppm vs 300/1000/3000 ppm
+
+expand_endpoint_to_contrasts <- function(row_df) {
+  stopifnot(nrow(row_df) == 1L)
+  r <- row_df[1, , drop = FALSE]
+  
+  dose_levels <- c(300L, 1000L, 3000L)
+  x_treated   <- c(r$x300, r$x1000, r$x3000)
+  n_treated   <- c(r$n300, r$n1000, r$n3000)
+  
+  tibble(
+    endpoint_id    = r$endpoint_id,
+    species        = r$species,
+    sex            = r$sex,
+    organ          = r$organ,
+    endpoint       = r$endpoint,
+    endpoint_class = r$endpoint_class,
+    count_source   = r$count_source,
+    dose_ppm       = dose_levels,
+    x0             = as.integer(rep(r$x0, 3)),
+    n0             = as.integer(rep(r$n0, 3)),
+    x1             = as.integer(x_treated),
+    n1             = as.integer(n_treated)
+  )
+}
+
+raw_scenarios <- bind_rows(lapply(seq_len(nrow(endpoints_wide)), function(i) {
+  expand_endpoint_to_contrasts(endpoints_wide[i, , drop = FALSE])
+})) %>%
+  mutate(
+    p0_obs = x0 / n0,
+    p1_obs = x1 / n1,
+    effect_direction = case_when(
+      p1_obs > p0_obs ~ "increase",
+      p1_obs < p0_obs ~ "decrease",
+      TRUE            ~ "same"
+    ),
+    degenerate_obs = (x0 + x1 == 0L) | (x0 + x1 == (n0 + n1)),
+    table_key = paste(x0, n0, x1, n1, sep = "_"),
+    combo_label = paste0(
+      sex, " ", species, " – ", organ, " – ", endpoint,
+      " [", endpoint_class, "], 0 vs ", dose_ppm, " ppm: ",
+      x0, "/", n0, " vs ", x1, "/", n1,
+      " (", effect_direction, ")"
+    ),
+    source = paste0("Furukawa et al. 2024, ", count_source, ".")
+  )
+
+## -------------------- FILTER DEGENERATE + COLLAPSE DUPLICATES ----
+## Keep all valid (non-degenerate) observed 2x2 tables, then collapse exact
+## duplicate count tables to avoid redundant simulation scenarios.
+
+scenarios <- raw_scenarios %>%
+  filter(!degenerate_obs) %>%
+  group_by(table_key) %>%
+  summarise(
+    x0 = first(x0),
+    n0 = first(n0),
+    x1 = first(x1),
+    n1 = first(n1),
+    
+    n_raw_combinations = n(),
+    dose_ppm_levels = paste(sort(unique(dose_ppm)), collapse = ","),
+    endpoint_classes = paste(sort(unique(endpoint_class)), collapse = ", "),
+    species_sex_set  = paste(unique(paste(sex, species)), collapse = " | "),
+    organs           = paste(unique(organ), collapse = " | "),
+    endpoints        = paste(unique(endpoint), collapse = " | "),
+    combo_members    = paste(combo_label, collapse = " || "),
+    source           = paste(unique(source), collapse = " || "),
+    repr_combo       = first(combo_label),
+    
+    ## Anchors to observed data
+    p0 = x0 / n0,
+    p1 = x1 / n1,
+    p_pool = (x0 + x1) / (n0 + n1),
+    
+    ## Keep OR as a descriptive statistic only (not used by the DGP)
+    or_hat = ((x1 + 0.5) * ((n0 - x0) + 0.5)) /
+      (((n1 - x1) + 0.5) * (x0 + 0.5)),
+    
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0(
+      "Observed unique 2x2: 0 ppm ", x0, "/", n0,
+      " vs dose ", x1, "/", n1,
+      " (dose levels represented: {", dose_ppm_levels, "})"
+    ),
+    combo_brief = ifelse(
+      n_raw_combinations == 1L,
+      repr_combo,
+      paste0("Collapses ", n_raw_combinations,
+             " identical study combinations: ", combo_members)
+    ),
+    rank = row_number(),
+    case_id = row_number(),
+    test = "chisq"
+  ) %>%
+  arrange(case_id)
+
+## Build a transparent raw catalogue (anti-cherry-picking audit trail)
+raw_catalogue <- raw_scenarios %>%
+  left_join(
+    scenarios %>% select(case_id, table_key),
+    by = "table_key"
+  ) %>%
+  mutate(
+    kept_for_sim = !degenerate_obs & !is.na(case_id),
+    exclusion_reason = case_when(
+      degenerate_obs ~ "observed_degenerate_all0_or_all1",
+      !degenerate_obs & duplicated(table_key) ~ "exact_duplicate_2x2_collapsed",
+      TRUE ~ "kept"
+    )
+  ) %>%
+  arrange(species, sex, organ, endpoint, dose_ppm)
+
+## -------------------- FIXED-MARGINS LINEAR-BY-LINEAR DRAW (2x2) ---
+## Model: P(A=a | n,n,m,theta) ∝ choose(n,a) * choose(n,m-a) * exp(theta*a)
+## Here omega = exp(theta). We calibrate theta so that E[A] ≈ n*p1.
+
+rFisherNoncentral_2x2 <- function(n, m, omega, seed) {
+  set.seed(seed)
+  
+  lo <- max(0L, m - n)
+  hi <- min(n, m)
+  if (lo > hi) stop("Infeasible margins: check n and m")
+  
+  a_vals <- lo:hi
+  lw <- lchoose(n, a_vals) + lchoose(n, m - a_vals) + a_vals * log(omega)
+  lw <- lw - max(lw)
+  w  <- exp(lw)
+  p  <- w / sum(w)
+  
+  sample(a_vals, size = 1L, prob = p)
+}
+
+## Compute E[A] under the 2x2 conditional (noncentral hypergeometric) model
+EA_noncentral_2x2 <- function(n, m, log_omega) {
+  lo <- max(0L, m - n)
+  hi <- min(n, m)
+  a_vals <- lo:hi
+  
+  lw <- lchoose(n, a_vals) + lchoose(n, m - a_vals) + a_vals * log_omega
+  lw <- lw - max(lw)
+  w  <- exp(lw)
+  p  <- w / sum(w)
+  
+  sum(a_vals * p)
+}
+
+## Calibrate omega so that E[A] ~= mu_target, using a monotone bisection on log(omega)
+omega_from_target_mean_2x2 <- function(n, m, mu_target,
+                                       log_omega_lo = -20, log_omega_hi = 20,
+                                       tol = 1e-6, maxit = 60) {
+  lo <- max(0L, m - n)
+  hi <- min(n, m)
+  
+  ## clamp target to support
+  mu_target <- max(lo, min(hi, mu_target))
+  
+  f_lo <- EA_noncentral_2x2(n, m, log_omega_lo) - mu_target
+  f_hi <- EA_noncentral_2x2(n, m, log_omega_hi) - mu_target
+  
+  ## if target achieved only at extremes (numerically), return the extreme
+  if (f_lo >= 0) return(exp(log_omega_lo))
+  if (f_hi <= 0) return(exp(log_omega_hi))
+  
+  for (it in seq_len(maxit)) {
+    mid <- 0.5 * (log_omega_lo + log_omega_hi)
+    f_mid <- EA_noncentral_2x2(n, m, mid) - mu_target
+    if (abs(f_mid) < tol) return(exp(mid))
+    if (f_mid > 0) {
+      log_omega_hi <- mid
+    } else {
+      log_omega_lo <- mid
+    }
+  }
+  exp(0.5 * (log_omega_lo + log_omega_hi))
+}
+
+## Data-anchored fixed-margins draw:
+##   m(n) = round((p0+p1)*n), omega calibrated so E[A] ~ n*p1
+draw_fixed_margins_lxl_2x2 <- function(p0, p1, n, seed) {
+  set.seed(seed)
+  
+  m <- as.integer(round((p0 + p1) * n))
+  m <- max(0L, min(2L * n, m))
+  
+  if (m == 0L || m == 2L * n) {
+    return(list(degenerate = TRUE, x = NULL, y = NULL, n = n, m = m, omega = NA_real_))
+  }
+  
+  mu_target <- n * p1
+  omega <- omega_from_target_mean_2x2(n = n, m = m, mu_target = mu_target)
+  
+  a <- rFisherNoncentral_2x2(n = n, m = m, omega = omega, seed = seed + 17L)
+  
+  s0 <- m - a  ## control events
+  s1 <- a      ## treated events
+  
+  x <- factor(c(rep("C", n), rep("T", n)), levels = c("C","T"))
+  y <- factor(c(rep("1", s0), rep("0", n - s0),
+                rep("1", s1), rep("0", n - s1)),
+              levels = c("0","1"))
+  
+  list(degenerate = FALSE, x = x, y = y, n = n, m = m, omega = omega)
+}
+
+power_at_n_fixed_lxl <- function(p0, p1, n, alpha, MC, R, B, seed_base) {
+  rej_perm <- 0L
+  rej_bt   <- 0L
+  
+  for (r in seq_len(MC)) {
+    dat <- draw_fixed_margins_lxl_2x2(p0 = p0, p1 = p1, n = n, seed = seed_base + 1009L * r)
+    
+    if (isTRUE(dat$degenerate)) {
+      ## keep replicate; non-informative -> no rejection
+      next
+    }
+    
+    p_perm <- bootei_safe_p(dat$x, dat$y, B = 1L, R = R, seed = seed_base + 2009L * r)
+    p_bt   <- bootei_safe_p(dat$x, dat$y, B = B,  R = R, seed = seed_base + 2009L * r)
+    
+    if (!is.na(p_perm)) rej_perm <- rej_perm + as.integer(p_perm <= alpha)
+    if (!is.na(p_bt))   rej_bt   <- rej_bt   + as.integer(p_bt   <= alpha)
+  }
+  
+  c(pow_perm = rej_perm / MC, pow_bt = rej_bt / MC)
+}
+
+## -------------------- CHUNKED TASK (PARALLEL UNIT) ---------------
+
+case_chunk_task_fixed <- function(case_id, row, n_vec,
+                                  alpha, MC_per_n, R_power, B_power) {
+  pin_threads()
+  row <- row[1, , drop = FALSE]
+  
+  out <- vector("list", length(n_vec))
+  for (k in seq_along(n_vec)) {
+    n <- as.integer(n_vec[k])
+    
+    ## deterministic seed per (case_id, n)
+    sb <- 10000L + as.integer(case_id) * 100000L + n
+    
+    pw <- power_at_n_fixed_lxl(
+      p0      = row$p0,
+      p1      = row$p1,
+      n       = n,
+      alpha   = alpha,
+      MC      = MC_per_n,
+      R       = R_power,
+      B       = B_power,
+      seed_base = sb
+    )
+    
+    out[[k]] <- tibble(
+      case_id  = as.integer(case_id),
+      n        = n,
+      pow_perm = unname(pw["pow_perm"]),
+      pow_bt   = unname(pw["pow_bt"])
+    )
+  }
+  
+  bind_rows(out)
+}
+
+## -------------------- RUN BATCH (case x n-chunks) ----------------
+
+n_grid <- make_n_grid()
+
+chunk_id <- rep(seq_len(ceiling(length(n_grid) / chunk_size)),
+                each = chunk_size)[seq_along(n_grid)]
+n_chunks <- split(n_grid, chunk_id)
+
+cat("raw combinations (0 vs 300/1000/3000) =", nrow(raw_scenarios), "\n")
+cat("non-degenerate raw combinations       =", sum(!raw_scenarios$degenerate_obs), "\n")
+cat("unique 2x2 scenarios after dedup      =", nrow(scenarios), "\n")
+cat("length(n_grid)                        =", length(n_grid), "\n")
+cat("chunk_size                            =", chunk_size, "\n")
+cat("length(n_chunks)                      =", length(n_chunks), "\n")
+cat("expected jobs                         =", nrow(scenarios) * length(n_chunks), "\n")
+
+stopifnot(nrow(scenarios) > 20L)
+stopifnot(length(n_grid) > 50L)
+stopifnot(length(n_chunks) > 10L)
+
+rows_list <- split(scenarios, scenarios$case_id)
+rows_list <- rows_list[order(as.integer(names(rows_list)))]
+
+job_design <- expand.grid(
+  case_id = scenarios$case_id,
+  chunk   = seq_along(n_chunks),
+  KEEP.OUT.ATTRS = FALSE,
+  stringsAsFactors = FALSE
+)
+job_design <- job_design[order(job_design$case_id, job_design$chunk), ]
+
+case_id_vec <- as.integer(job_design$case_id)
+row_vec     <- rows_list[as.character(case_id_vec)]
+n_vec_vec   <- n_chunks[job_design$chunk]
+
+cat("batchMap will add jobs =", length(case_id_vec), "\n")
+stopifnot(length(case_id_vec) == nrow(scenarios) * length(n_chunks))
+
+regdir <- tempfile("butyraldehyde2024_fixedmarg_lxl_chi2_savings_chunked_", tmpdir = tempdir())
+reg <- makeRegistry(
+  file.dir  = regdir,
+  packages  = c("bootei", "dplyr", "tibble", "readr")
+)
+
+reg$cluster.functions <- makeClusterFunctionsMulticore(ncpus = N_CORES)
+
+ids <- batchMap(
+  fun     = case_chunk_task_fixed,
+  case_id = case_id_vec,
+  row     = row_vec,
+  n_vec   = n_vec_vec,
+  more.args = list(
+    alpha    = alpha,
+    MC_per_n = MC_per_n,
+    R_power  = R_power,
+    B_power  = B_power
+  ),
+  reg = reg
+)
+
+submitJobs(ids, resources = list(ncpus = 1L), reg = reg)
+ok <- waitForJobs(ids, reg = reg)
+
+if (!ok) {
+  cat(paste(getErrorMessages(reg = reg), collapse = "\n"))
+  stop("Some jobs failed.")
+}
+
+res_list <- reduceResultsList(ids, reg = reg)
+
+try(batchtools::removeRegistry(reg = reg), silent = TRUE)
+try({
+  batchtools::setRegistry(reg)
+  batchtools::removeRegistry()
+}, silent = TRUE)
+
+pow_tbl <- bind_rows(res_list) %>%
+  arrange(case_id, n)
+
+## -------------------- RECONSTRUCT TARGET n PER CASE --------------
+
+savings <- pow_tbl %>%
+  group_by(case_id) %>%
+  summarise(
+    n_perm_target = {
+      idx <- which(pow_perm >= power_target)
+      if (length(idx)) min(n[idx]) else NA_integer_
+    },
+    n_bootei_target = {
+      idx <- which(pow_bt >= power_target)
+      if (length(idx)) min(n[idx]) else NA_integer_
+    },
+    reached_perm   = any(pow_perm >= power_target, na.rm = TRUE),
+    reached_bootei = any(pow_bt   >= power_target, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    saved_n = ifelse(is.na(n_perm_target) | is.na(n_bootei_target),
+                     NA_integer_, n_perm_target - n_bootei_target),
+    saved_frac = ifelse(is.na(n_perm_target) | is.na(n_bootei_target) | n_perm_target == 0,
+                        NA_real_, (n_perm_target - n_bootei_target) / n_perm_target),
+    max_n_grid = max(n_grid)
+  )
+
+final_tbl <- scenarios %>%
+  left_join(savings, by = "case_id") %>%
+  transmute(
+    case_id, rank, test,
+    label, combo_brief, combo_members,
+    n_raw_combinations, dose_ppm_levels,
+    species_sex_set, organs, endpoints, endpoint_classes,
+    source,
+    x0, n0, x1, n1,
+    p0, p1, p_pool, or_hat,
+    n_perm_target, n_bootei_target, saved_n, saved_frac,
+    power_target = power_target,
+    alpha = alpha,
+    R_power = R_power,
+    B_power = B_power,
+    MC_per_n = MC_per_n,
+    max_n_grid, reached_perm, reached_bootei
+  )
+
+## -------------------- WRITE OUTPUTS ------------------------------
+
+outfile_main <- file.path(
+  ROOT,
+  "butyraldehyde2024_inhalation_fixed_margins_lxl_chi2_sample_size_savings_chunked_all2x2_unique.csv"
+)
+write_csv(final_tbl, outfile_main)
+
+outfile_catalogue <- file.path(
+  ROOT,
+  "butyraldehyde2024_inhalation_raw_control_vs_dose_2x2_catalogue.csv"
+)
+write_csv(raw_catalogue, outfile_catalogue)
+
+cat("\nWrote:\n")
+cat(" -", outfile_main, "\n")
+cat(" -", outfile_catalogue, "\n")
