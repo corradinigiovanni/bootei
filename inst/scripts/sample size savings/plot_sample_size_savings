@@ -1,0 +1,340 @@
+## ================================================================
+## BOOTEI chi^2 – Sample size savings (Butyraldehyde 2-year inhalation; chunked)
+## POST-PROCESSING / REPORT + FINAL PLOT (saved outputs only)
+## ================================================================
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+  library(ggplot2)
+  library(scales)
+})
+
+ROOT <- "."
+
+infile_main <- file.path(
+  ROOT,
+  "butyraldehyde2024_inhalation_fixed_margins_lxl_chi2_sample_size_savings_chunked_all2x2_unique.csv"
+)
+
+infile_catalogue <- file.path(
+  ROOT,
+  "butyraldehyde2024_inhalation_raw_control_vs_dose_2x2_catalogue.csv"
+)
+
+# Paper colors
+col_perm   <- "#D55E00"  # no saving
+col_bootei <- "#0072B2"  # saving
+
+# -------------------- READ SAVED OUTPUTS -------------------------
+
+df <- read_csv(infile_main, show_col_types = FALSE) %>%
+  mutate(
+    test = factor(test, levels = c("chisq")),
+    reached_perm   = if ("reached_perm"   %in% names(.)) reached_perm   else !is.na(n_perm_target),
+    reached_bootei = if ("reached_bootei" %in% names(.)) reached_bootei else !is.na(n_bootei_target),
+    reached_both   = reached_perm & reached_bootei,
+    
+    ## --- IMPORTANT: convert per-group targets to TOTAL sample size (both groups) ---
+    N_perm_target   = 2L * n_perm_target,
+    N_bootei_target = 2L * n_bootei_target,
+    saved_N         = 2L * saved_n
+    ## saved_frac is unchanged by the factor-2 rescaling
+  )
+
+raw_catalogue <- read_csv(infile_catalogue, show_col_types = FALSE)
+
+# -------------------- REQUIRED COLUMNS ---------------------------
+
+req <- c(
+  "case_id","rank","test",
+  "label","source",
+  "x0","n0","x1","n1","p0","p1",
+  "n_perm_target","n_bootei_target","saved_n","saved_frac",
+  "N_perm_target","N_bootei_target","saved_N",
+  "reached_perm","reached_bootei"
+)
+
+missing <- setdiff(req, names(df))
+if (length(missing)) stop("Missing columns: ", paste(missing, collapse = ", "))
+
+# -------------------- AUDIT (RAW CATALOGUE) ----------------------
+
+cat("\nRaw catalogue audit:\n")
+print(raw_catalogue %>% count(exclusion_reason, name = "n_rows"))
+
+cat("\nRows (unique simulated scenarios):", nrow(df), "\n")
+cat("Reached both methods:", sum(df$reached_both, na.rm = TRUE), "\n")
+cat("Reached perm only:", sum(df$reached_perm & !df$reached_bootei, na.rm = TRUE), "\n")
+cat("Reached bootei only:", sum(df$reached_bootei & !df$reached_perm, na.rm = TRUE), "\n\n")
+
+# -------------------- SUMMARY TABLE (TOTAL N) --------------------
+
+summary_tbl <- df %>%
+  group_by(test) %>%
+  summarise(
+    n_cases = n(),
+    n_reached_both = sum(reached_both, na.rm = TRUE),
+    prop_saved_pos = mean(saved_N > 0, na.rm = TRUE),
+    
+    mean_saved_N = mean(saved_N, na.rm = TRUE),
+    mean_saved_frac = mean(saved_frac, na.rm = TRUE),
+    
+    median_saved_N = median(saved_N, na.rm = TRUE),
+    median_saved_frac = median(saved_frac, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(summary_tbl)
+
+# -------------------- TOP SAVINGS TABLE (TOTAL N) ----------------
+
+top_saved <- df %>%
+  filter(reached_both, is.finite(saved_N), is.finite(saved_frac)) %>%
+  arrange(desc(saved_N), desc(saved_frac)) %>%
+  mutate(saved_pct = 100 * saved_frac) %>%
+  select(
+    case_id, rank, test,
+    label, combo_brief, source,
+    x0, n0, x1, n1, p0, p1,
+    N_perm_target, N_bootei_target, saved_N, saved_frac, saved_pct,
+    reached_perm, reached_bootei
+  )
+
+top_saved
+
+# -------------------- PLOT DATA (REACHED BOTH) -------------------
+
+df_ok <- df %>%
+  filter(reached_both, is.finite(saved_N), is.finite(saved_frac)) %>%
+  mutate(
+    saved_pct = 100 * saved_frac,
+    saving_flag = ifelse(saved_N > 0, "Saving", "No saving"),
+    saving_flag = factor(saving_flag, levels = c("No saving", "Saving"))
+  )
+
+# -------------------- THEME (white, large, centered) -------------
+
+theme_jrssb_big <- function(base_size = 15) {
+  theme_bw(base_size = base_size) +
+    theme(
+      panel.background = element_rect(fill = "white", colour = "black", linewidth = 0.5),
+      plot.background  = element_rect(fill = "white", colour = NA),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(colour = "grey88", linewidth = 0.35),
+      
+      axis.line  = element_line(colour = "black", linewidth = 0.45),
+      axis.ticks = element_line(colour = "black", linewidth = 0.45),
+      axis.ticks.length = grid::unit(0.22, "cm"),
+      
+      axis.text.x  = element_text(size = base_size + 1),
+      axis.text.y  = element_text(size = base_size + 1),
+      axis.title.x = element_text(size = base_size + 5, margin = margin(t = 10)),
+      axis.title.y = element_text(size = base_size + 5, margin = margin(r = 10)),
+      
+      plot.title = element_text(
+        face = "bold", size = base_size + 7, hjust = 0.5,
+        margin = margin(b = 8)
+      ),
+      plot.subtitle = element_blank(),
+      
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.title = element_blank(),
+      legend.text = element_text(size = base_size + 1),
+      legend.key = element_rect(fill = "white", colour = NA),
+      
+      plot.margin = margin(12, 14, 10, 14)
+    )
+}
+
+# -------------------- FINAL PLOT: Scatter (log scale) ------------
+
+log_breaks <- sort(unique(2 * c(4, 5, 10, 20, 30, 50, 100, 200, 500, 1000, 2000)))
+
+g_N_scatter <- ggplot(
+  df_ok,
+  aes(
+    x = N_perm_target,
+    y = N_bootei_target,
+    colour = saving_flag
+  )
+) +
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed", linewidth = 0.75, colour = "grey25"
+  ) +
+  geom_point(size = 3.4, alpha = 0.95) +
+  scale_color_manual(
+    values = c(
+      "No saving" = col_perm,
+      "Saving"    = col_bootei
+    ),
+    labels = c(
+      "No saving",
+      "Saving"
+    )
+  ) +
+  scale_x_log10(breaks = log_breaks, labels = label_number()) +
+  scale_y_log10(breaks = log_breaks, labels = label_number()) +
+  annotation_logticks(sides = "bl", linewidth = 0.3, colour = "grey25") +
+  coord_equal() +
+  labs(
+    title = "Sample-size savings",
+    x = "CLASSIC total sample size",
+    y = "BOOTEI total sample size"
+  ) +
+  theme_jrssb_big(base_size = 15)
+
+g_N_scatter
+
+# ------------------ FIGURE 6 (JRSSB-style): SAMPLE-SIZE SAVINGS -------------
+# Drop-in block for:
+#   BOOTEI chi^2 – Butyraldehyde 2-year inhalation
+#
+# Assumes:
+#   - df_ok already exists
+#   - ROOT already exists
+#
+# df_ok should already contain:
+#   N_perm_target, N_bootei_target, saved_N, saved_frac, saving_flag
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# ------------------ Safety check ------------------
+stopifnot(
+  "df_ok not found!" = exists("df_ok"),
+  "No rows in df_ok!" = nrow(df_ok) > 0
+)
+
+# ------------------ Axis breaks / limits ------------------
+all_N_vals <- c(df_ok$N_perm_target, df_ok$N_bootei_target)
+all_N_vals <- all_N_vals[is.finite(all_N_vals) & all_N_vals > 0]
+
+N_limits_data <- range(all_N_vals)
+
+candidate_breaks <- c(
+  8, 10, 20, 40, 60, 100, 200, 400, 600,
+  1000, 2000, 4000, 6000, 10000
+)
+
+# Small padding in log10 space so extreme points are not clipped
+pad_frac_log10 <- 0.04
+log_min <- log10(N_limits_data[1])
+log_max <- log10(N_limits_data[2])
+log_rng <- log_max - log_min
+
+N_limits_plot <- c(
+  10^(log_min - pad_frac_log10 * log_rng),
+  10^(log_max + pad_frac_log10 * log_rng)
+)
+
+axis_breaks <- candidate_breaks[
+  candidate_breaks >= N_limits_data[1] &
+    candidate_breaks <= N_limits_data[2]
+]
+
+if (length(axis_breaks) < 4) {
+  axis_breaks <- unique(sort(pretty(all_N_vals, n = 5)))
+  axis_breaks <- axis_breaks[axis_breaks > 0]
+}
+
+# ------------------ Theme ------------------
+theme_jrssb_savings <- function(base_size = 11) {
+  theme_classic(base_size = base_size) +
+    theme(
+      panel.grid = element_blank(),
+      
+      axis.line  = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks.length = grid::unit(0.16, "cm"),
+      
+      axis.text.x  = element_text(size = base_size - 1),
+      axis.text.y  = element_text(size = base_size - 1),
+      axis.title.x = element_text(size = base_size, margin = margin(t = 8)),
+      axis.title.y = element_text(size = base_size, margin = margin(r = 8)),
+      
+      plot.title    = element_blank(),
+      plot.subtitle = element_blank(),
+      
+      legend.position = "none",
+      
+      plot.margin = margin(8, 10, 8, 8)
+    )
+}
+
+# ------------------ Final plot ------------------
+sample_size_savings_plot_chi2 <- ggplot(
+  df_ok,
+  aes(
+    x = N_perm_target,
+    y = N_bootei_target
+  )
+) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dotted",
+    linewidth = 0.75,
+    colour = "grey35"
+  ) +
+  geom_point(
+    aes(shape = saving_flag, fill = saving_flag),
+    size = 2.6,
+    stroke = 0.55,
+    colour = "black"
+  ) +
+  scale_shape_manual(
+    values = c(
+      "No saving" = 21,   # circle
+      "Saving"    = 24    # triangle
+    ),
+    guide = "none"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "No saving" = "grey70",
+      "Saving"    = "black"
+    ),
+    guide = "none"
+  ) +
+  scale_x_log10(
+    name   = "CLASSIC required total sample size (log10 scale)",
+    breaks = axis_breaks,
+    labels = label_number(),
+    limits = N_limits_plot
+  ) +
+  scale_y_log10(
+    name   = "BOOTEI required total sample size (log10 scale)",
+    breaks = axis_breaks,
+    labels = label_number(),
+    limits = N_limits_plot
+  ) +
+  coord_equal(expand = FALSE, clip = "off") +
+  theme_jrssb_savings(base_size = 11)
+
+print(sample_size_savings_plot_chi2)
+
+# ------------------ Save outputs ------------------
+ggsave(
+  filename = file.path(ROOT, "sample_size_savings_plot_chi2.pdf"),
+  plot     = sample_size_savings_plot_chi2,
+  width    = 5.4,
+  height   = 5.4,
+  units    = "in",
+  device   = cairo_pdf
+)
+
+ggsave(
+  filename = file.path(ROOT, "sample_size_savings_plot_chi2.tiff"),
+  plot     = sample_size_savings_plot_chi2,
+  width    = 5.4,
+  height   = 5.4,
+  units    = "in",
+  dpi      = 600,
+  compression = "lzw",
+  device   = "tiff"
+)
