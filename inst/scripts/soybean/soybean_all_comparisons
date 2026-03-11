@@ -1,7 +1,7 @@
 ## ===============================================================
 ## BOOTEI vs Classical Permutation vs mid-p on Soybean (mlbench)
 ## Article-explanatory (aligned with simulations): ONLY
-##   - Mann–Whitney: between TWO classes, SAME variable (standard)
+##   - Welch t-test: between TWO classes, SAME variable (standard)
 ##   - Chi-square: within-class, variable pairs (ALLOW 2x2),
 ##                 droplevels() on x,y AFTER removing NA pairs
 ##
@@ -13,9 +13,14 @@
 ## ===============================================================
 
 ## ----------------- compile / load -----------------
-library(bootei)
+
 library(mlbench)
 data("Soybean", package = "mlbench")
+
+
+Rcpp::sourceCpp('/media/data/corradini/bootei_t/bootei.cpp')
+source('/media/data/corradini/bootei_t/bootei.R')
+
 
 dd <- Soybean
 dd$Class <- droplevels(dd$Class)  # ONLY for stable class indexing
@@ -27,14 +32,14 @@ alpha     <- 0.05
 pperm_max <- 0.10
 
 ## permutation budgets
-R_mw   <- 5000L
-R_chi2 <- 5000L
+R_welch <- 5000L
+R_chi2  <- 5000L
 
 ## BOOTEI budget
 B_big <- 200L
 
 ## bootstrap plan type used by BOOTEI layer
-boot_type <- "sobol"   # "sobol" | "sobol_shift" | "efron"
+boot_type <- "sobol"   # "sobol" | "efron"
 
 ## optional prescreen (skip BOOTEI unless p_perm is near alpha)
 do_prescreen <- FALSE
@@ -48,8 +53,8 @@ n_min_unpaired <- 5L
 class_col     <- which(names(dd) == "Class")
 attr_cols_all <- setdiff(seq_len(ncol(dd)), class_col)
 
-## MW: scan all attributes (non-Class); only those that convert to numeric will survive filters
-attr_cols_mw <- attr_cols_all
+## Welch: scan all attributes (non-Class); only those that convert to numeric will survive filters
+attr_cols_welch <- attr_cols_all
 
 ## Chi-square: keep only categorical-like columns (factor/character)
 is_cat_col <- function(z) is.factor(z) || is.character(z)
@@ -57,7 +62,7 @@ attr_cols_chi2 <- attr_cols_all[vapply(dd[attr_cols_all], is_cat_col, logical(1)
 
 ## ----------------- helpers -----------------
 
-## MW: robust numeric conversion (prevents per-class factor recoding artifacts)
+## Welch: robust numeric conversion (prevents per-class factor recoding artifacts)
 to_numeric_ordinal <- function(z) {
   if (is.factor(z) || is.character(z)) {
     suppressWarnings(as.numeric(as.character(z)))
@@ -66,7 +71,7 @@ to_numeric_ordinal <- function(z) {
   }
 }
 
-## rule for MW:
+## rule for Welch:
 ## - both samples have >=2 unique values
 ## - at least one has >=3 unique values
 ok_uniques_two_vars <- function(x, y) {
@@ -203,12 +208,12 @@ top_improvements <- function(df, k = 20, pperm_max = 0.10) {
 }
 
 ## ===============================================================
-## 1) MANN–WHITNEY (standard): TWO classes, SAME variable
+## 1) WELCH t-test (standard): TWO classes, SAME variable
 ##    - only cl1 < cl2 (unique class pairs)
 ##    - no droplevels() on the variable before numeric conversion
 ## ===============================================================
 
-df_mw <- list()
+df_welch <- list()
 kk <- 0L
 
 for (cl1 in 1:(G - 1)) {
@@ -217,7 +222,7 @@ for (cl1 in 1:(G - 1)) {
     idx1 <- (dd$Class == classes[cl1])
     idx2 <- (dd$Class == classes[cl2])
     
-    for (i in attr_cols_mw) {
+    for (i in attr_cols_welch) {
       
       x <- to_numeric_ordinal(dd[idx1, i])
       y <- to_numeric_ordinal(dd[idx2, i])
@@ -231,15 +236,15 @@ for (cl1 in 1:(G - 1)) {
       seme <- seed_from(c(200L, cl1, cl2, i))
       
       rr <- run_three_pvals(
-        x, y, test = "mannwhitney",
-        seed = seme, R = R_mw, B = B_big,
+        x, y, test = "welch",
+        seed = seme, R = R_welch, B = B_big,
         alternative = "two.sided"
       )
       
       if (!is.na(rr$p_perm) && rr$p_perm < pperm_max) {
         kk <- kk + 1L
-        df_mw[[kk]] <- data.frame(
-          test   = "mannwhitney",
+        df_welch[[kk]] <- data.frame(
+          test   = "welch",
           class1 = as.character(classes[cl1]),
           class2 = as.character(classes[cl2]),
           i      = i,
@@ -259,8 +264,8 @@ for (cl1 in 1:(G - 1)) {
   }
 }
 
-df_mw <- if (length(df_mw) > 0) do.call(rbind, df_mw) else data.frame()
-rownames(df_mw) <- NULL
+df_welch <- if (length(df_welch) > 0) do.call(rbind, df_welch) else data.frame()
+rownames(df_welch) <- NULL
 
 ## ===============================================================
 ## 2) CHI-SQUARE (standard): within class, variable pairs (ALLOW 2x2)
@@ -332,12 +337,12 @@ rownames(df_chi2) <- NULL
 ## Summaries (per test) — restricted to p_perm < pperm_max
 ## ===============================================================
 
-sum_mw   <- summarise_results(df_mw,   alpha, pperm_max)
-sum_chi2 <- summarise_results(df_chi2, alpha, pperm_max)
+sum_welch <- summarise_results(df_welch, alpha, pperm_max)
+sum_chi2  <- summarise_results(df_chi2,  alpha, pperm_max)
 
 summary_all <- rbind(
-  cbind(test = "mannwhitney", sum_mw),
-  cbind(test = "chisq",       sum_chi2)
+  cbind(test = "welch", sum_welch),
+  cbind(test = "chisq", sum_chi2)
 )
 rownames(summary_all) <- NULL
 print(summary_all)
@@ -347,12 +352,12 @@ print(summary_all)
 ## (computed within the kept set p_perm < pperm_max)
 ## ===============================================================
 
-cross_mw   <- summarise_cross_sig(df_mw,   alpha, pperm_max)
-cross_chi2 <- summarise_cross_sig(df_chi2, alpha, pperm_max)
+cross_welch <- summarise_cross_sig(df_welch, alpha, pperm_max)
+cross_chi2  <- summarise_cross_sig(df_chi2,  alpha, pperm_max)
 
 cross_all <- rbind(
-  cbind(test = "mannwhitney", cross_mw),
-  cbind(test = "chisq",       cross_chi2)
+  cbind(test = "welch", cross_welch),
+  cbind(test = "chisq", cross_chi2)
 )
 rownames(cross_all) <- NULL
 print(cross_all)
@@ -361,48 +366,48 @@ print(cross_all)
 ## Export the ACTUAL crossing cases (so you can pick examples)
 ## ===============================================================
 
-mw_kept   <- df_mw[!is.na(df_mw$p_perm)   & df_mw$p_perm   < pperm_max, , drop = FALSE]
-chi2_kept <- df_chi2[!is.na(df_chi2$p_perm) & df_chi2$p_perm < pperm_max, , drop = FALSE]
+welch_kept <- df_welch[!is.na(df_welch$p_perm) & df_welch$p_perm < pperm_max, , drop = FALSE]
+chi2_kept  <- df_chi2[!is.na(df_chi2$p_perm) & df_chi2$p_perm < pperm_max, , drop = FALSE]
 
-cross_cases_mw <- mw_kept[!is.na(mw_kept$p_bootei) &
-                            mw_kept$p_perm > alpha &
-                            mw_kept$p_bootei < alpha, , drop = FALSE]
+cross_cases_welch <- welch_kept[!is.na(welch_kept$p_bootei) &
+                                  welch_kept$p_perm > alpha &
+                                  welch_kept$p_bootei < alpha, , drop = FALSE]
 
 cross_cases_chi2 <- chi2_kept[!is.na(chi2_kept$p_bootei) &
                                 chi2_kept$p_perm > alpha &
                                 chi2_kept$p_bootei < alpha, , drop = FALSE]
 
 ## quick look
-print(head(cross_cases_mw, 10))
+print(head(cross_cases_welch, 10))
 print(head(cross_cases_chi2, 10))
 
 ## ===============================================================
 ## Top improvements (largest p_perm - p_bootei), restricted to kept set
 ## ===============================================================
 
-top_mw   <- top_improvements(df_mw,   k = 20, pperm_max = pperm_max)
-top_chi2 <- top_improvements(df_chi2, k = 20, pperm_max = pperm_max)
+top_welch <- top_improvements(df_welch, k = 20, pperm_max = pperm_max)
+top_chi2  <- top_improvements(df_chi2,  k = 20, pperm_max = pperm_max)
 
 ## ===============================================================
 ## Save results
 ## ===============================================================
 
-out_dir <- "_"
+out_dir <- "/media/data/corradini/bootei_t"
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 saveRDS(
   list(
-    df_mw            = df_mw,
-    df_chi2          = df_chi2,
-    summary_all      = summary_all,
-    cross_all        = cross_all,
-    cross_cases_mw   = cross_cases_mw,
-    cross_cases_chi2 = cross_cases_chi2,
-    top_mw           = top_mw,
-    top_chi2         = top_chi2,
+    df_welch          = df_welch,
+    df_chi2           = df_chi2,
+    summary_all       = summary_all,
+    cross_all         = cross_all,
+    cross_cases_welch = cross_cases_welch,
+    cross_cases_chi2  = cross_cases_chi2,
+    top_welch         = top_welch,
+    top_chi2          = top_chi2,
     settings = list(
       alpha = alpha, pperm_max = pperm_max,
-      R_mw = R_mw, R_chi2 = R_chi2,
+      R_welch = R_welch, R_chi2 = R_chi2,
       B_big = B_big, boot_type = boot_type,
       n_min_paired = n_min_paired,
       n_min_unpaired = n_min_unpaired,
@@ -413,7 +418,6 @@ saveRDS(
   file = file.path(out_dir, "bootei_soybean_results.rds")
 )
 
-
 ##################################################################
 
 library(dplyr)
@@ -421,11 +425,11 @@ library(tidyr)
 library(ggplot2)
 
 # ---- load results ----
-in_dir <- "_"
+in_dir <- "/media/data/corradini/bootei_t"
 res <- readRDS(file.path(in_dir, "bootei_soybean_results.rds"))
 
-df_mw   <- res$df_mw
-df_chi2 <- res$df_chi2
+df_welch <- res$df_welch
+df_chi2  <- res$df_chi2
 
 # ---- build long df (p_perm vs p_bootei), keep finite ----
 mk_long <- function(df, test_name) {
@@ -440,13 +444,13 @@ mk_long <- function(df, test_name) {
     dplyr::mutate(
       method = recode(method, p_perm = "Permutation", p_bootei = "BOOTEI"),
       method = factor(method, levels = c("Permutation", "BOOTEI")),
-      test   = factor(test, levels = c("Mann–Whitney", "Chi-square"))
+      test   = factor(test, levels = c("Welch t-test", "Chi-square"))
     )
 }
 
 p_long <- bind_rows(
-  mk_long(df_mw, "Mann–Whitney"),
-  mk_long(df_chi2, "Chi-square")
+  mk_long(df_welch, "Welch t-test"),
+  mk_long(df_chi2,  "Chi-square")
 )
 
 # ---- 4 boxplots: linear + log scale (2 panels) ----
@@ -478,15 +482,10 @@ p_log <- ggplot(p_long, aes(x = method, y = p)) +
 p_lin
 p_log
 
-
-
-# p_long deve avere: test, method (Permutation/BOOTEI), p
-
-# ---- wide: una riga per caso, due colonne di p-value ----
+# ---- wide: one row per case, two columns of p-values ----
 p_wide <- p_long %>%
   dplyr::select(test, method, p) %>%
-  dplyr::group_by(test, method) %>% 
-  # (di solito non serve, ma protegge se ci fossero duplicati accidentali)
+  dplyr::group_by(test, method) %>%
   dplyr::mutate(row_id = row_number()) %>%
   ungroup() %>%
   pivot_wider(
@@ -495,10 +494,10 @@ p_wide <- p_long %>%
   ) %>%
   dplyr::filter(is.finite(Permutation), is.finite(BOOTEI)) %>%
   dplyr::mutate(
-    test = factor(test, levels = c("Mann–Whitney", "Chi-square"))
+    test = factor(test, levels = c("Welch t-test", "Chi-square"))
   )
 
-# ---- scatter (scala lineare) ----
+# ---- scatter (linear scale) ----
 g_scatter <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
   geom_point(alpha = 0.35, size = 1.6) +
@@ -508,7 +507,7 @@ g_scatter <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
     x = "Permutation p-value",
     y = "BOOTEI p-value",
     title = "BOOTEI vs Permutation (per test)",
-    subtitle = "Linea tratteggiata: y = x"
+    subtitle = "Dashed line: y = x"
   ) +
   theme_classic(base_size = 12) +
   theme(
@@ -519,7 +518,7 @@ g_scatter <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
 
 g_scatter
 
-# ---- scatter (scala log10, di solito più informativa per p-value) ----
+# ---- scatter (log10 scale) ----
 g_scatter_log <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
   geom_point(alpha = 0.35, size = 1.6) +
@@ -531,7 +530,7 @@ g_scatter_log <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
     x = "Permutation p-value (log10)",
     y = "BOOTEI p-value (log10)",
     title = "BOOTEI vs Permutation (per test, log scale)",
-    subtitle = "Linea tratteggiata: y = x"
+    subtitle = "Dashed line: y = x"
   ) +
   theme_classic(base_size = 12) +
   theme(
@@ -541,4 +540,3 @@ g_scatter_log <- ggplot(p_wide, aes(x = Permutation, y = BOOTEI)) +
   )
 
 g_scatter_log
-
