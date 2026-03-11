@@ -15,6 +15,7 @@ suppressPackageStartupMessages({
   library(glue)
   library(conflicted)
   library(patchwork)
+  library(cowplot)
 })
 
 conflict_prefer("select", "dplyr")
@@ -248,119 +249,238 @@ H0_summary_noBH <- H0_tests_noBH %>%
     .groups        = "drop"
   )
 
-# ----------------------------- PLOTS ---------------------------
-
-plot_power_vs_n <- function(k_row_pick, k_col_pick) {
-  df_k <- chi2_long_H1 %>%
-    filter(k_row == k_row_pick, k_col == k_col_pick) %>%
-    arrange(n)
-  
-  k_lab_here <- unique(df_k$k_lab)
-  if (length(k_lab_here) == 0L) return(NULL)
-  
-  ggplot(df_k, aes(x = n, y = power, group = method, color = method)) +
-    geom_line() +
-    geom_point() +
-    scale_x_continuous("n", breaks = sort(unique(df_k$n))) +
-    scale_y_continuous("Power", limits = c(0, 1), labels = percent_format()) +
-    labs(
-      title    = glue("Chi-square – {k_lab_here} – Power vs n (H1)"),
-      subtitle = "Permutation vs BOOTEI",
-      color    = "Method"
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-}
-
-plot_size_vs_n <- function(k_row_pick, k_col_pick) {
-  df_k <- chi2_summary_all %>%
-    filter(grepl("H0", scenario), k_row == k_row_pick, k_col == k_col_pick) %>%
-    select(k_lab, n, rate_perm, rate_midp, rate_boot) %>%
-    pivot_longer(c(rate_perm, rate_midp, rate_boot),
-                 names_to = "method", values_to = "size") %>%
-    mutate(
-      method = recode(method, rate_perm = "Perm", rate_midp = "mid-p", rate_boot = "BOOTEI"),
-      method = factor(method, levels = c("Perm", "mid-p", "BOOTEI"))
-    ) %>%
-    arrange(n)
-  
-  k_lab_here <- unique(df_k$k_lab)
-  if (length(k_lab_here) == 0L) return(NULL)
-  
-  ggplot(df_k, aes(x = n, y = size, group = method, color = method)) +
-    geom_hline(yintercept = alpha_nominal, linetype = "dashed") +
-    geom_line() +
-    geom_point() +
-    scale_x_continuous("n", breaks = sort(unique(df_k$n))) +
-    scale_y_continuous(
-      "Type I error",
-      limits = c(0, max(0.25, alpha_nominal * 2)),
-      labels = percent_format()
-    ) +
-    labs(
-      title    = glue("Chi-square – {k_lab_here} – Type I error vs n (H0)"),
-      subtitle = glue("Dashed line = nominal alpha ({alpha_nominal})"),
-      color    = "Method"
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
-}
-
-pH0_2 <- plot_size_vs_n(2L, 2L); pH1_2 <- plot_power_vs_n(2L, 2L)
-pH0_3 <- plot_size_vs_n(3L, 3L); pH1_3 <- plot_power_vs_n(3L, 3L)
-pH0_4 <- plot_size_vs_n(4L, 4L); pH1_4 <- plot_power_vs_n(4L, 4L)
-
-if (!is.null(pH0_2)) print(pH0_2); if (!is.null(pH1_2)) print(pH1_2)
-if (!is.null(pH0_3)) print(pH0_3); if (!is.null(pH1_3)) print(pH1_3)
-if (!is.null(pH0_4)) print(pH0_4); if (!is.null(pH1_4)) print(pH1_4)
-
-# ------------------ COMBINED POWER FIGURE (LOG10 X) ------------
-
-col_perm   <- "#D55E00"
-col_bootei <- "#0072B2"
-
-theme_clean <- function(base_size = 11) {
-  theme_bw(base_size = base_size) +
-    theme(
-      panel.grid.minor   = element_blank(),
-      panel.grid.major.x = element_blank(),
-      legend.position    = "bottom",
-      legend.box         = "horizontal",
-      plot.title         = element_text(face = "bold"),
-      axis.text.x        = element_text(angle = 45, hjust = 1)
-    )
-}
-
-plot_power_log10 <- function(k_row_pick, k_col_pick) {
-  df_k <- chi2_long_H1 %>%
-    filter(k_row == k_row_pick, k_col == k_col_pick) %>%
-    mutate(Method = factor(method, levels = c("Perm", "BOOTEI"),
-                           labels = c("Permutation", "BOOTEI"))) %>%
-    arrange(n)
-  
-  k_lab_here <- unique(df_k$k_lab)
-  n_vals     <- sort(unique(df_k$n))
-  
-  ggplot(df_k, aes(x = n, y = power, colour = Method, group = Method)) +
-    geom_line(linewidth = 1.1) +
-    geom_point(size = 1.8) +
-    scale_x_log10(expression(log[10](n)), breaks = n_vals, labels = n_vals) +
-    scale_y_continuous("Power", labels = percent_format(accuracy = 1), limits = c(0, 1)) +
-    scale_colour_manual(values = c("Permutation" = col_perm, "BOOTEI" = col_bootei)) +
-    labs(title = k_lab_here, subtitle = expression("Power under " * H[1]), colour = NULL) +
-    coord_cartesian(expand = FALSE) +
-    theme_clean()
-}
-
-fig_power <- plot_power_log10(2, 2) + plot_power_log10(3, 3) + plot_power_log10(4, 4) +
-  plot_layout(nrow = 1, guides = "collect") &
-  theme(legend.position = "bottom")
-
-print(fig_power)
-
-# --------------------------- OUTPUT ----------------------------
+    # --------------------------- OUTPUT ----------------------------
 
 print(H1_mcnemar_summary)
 print(H1_mcnemar_midp_summary)
 print(H0_summary)
 print(H0_summary_noBH)
+
+    
+# ----------------------------- PLOTS ---------------------------
+
+# ------------------ Theme ------------------
+theme_jrssb_fig_shared_axes <- function(base_size = 11) {
+  theme_classic(base_size = base_size) +
+    theme(
+      panel.grid = element_blank(),
+      axis.line  = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks.length = grid::unit(0.14, "cm"),
+      
+      axis.text.x = element_text(
+        size  = base_size - 2,
+        angle = 35,
+        hjust = 1,
+        vjust = 1
+      ),
+      axis.text.y = element_text(size = base_size - 1),
+      
+      # shared axis titles outside the panels
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      
+      plot.title    = element_blank(),
+      plot.subtitle = element_text(
+        size = base_size,
+        hjust = 0.5,
+        margin = margin(b = 4)
+      ),
+      
+      # move panel tags slightly higher
+      plot.tag = element_text(size = base_size + 1, face = "bold"),
+      plot.tag.position = c(0.01, 1.03),
+      
+      legend.position = "none",
+      
+      # a bit more top margin so A/B/C have room
+      plot.margin = margin(10, 4, 5, 4)
+    )
+}
+
+# ------------------ Single-panel function ------------------
+make_powersize_panel_chi2_dgp2 <- function(k_row_pick, k_col_pick, panel_tag, base_size = 11) {
+  
+  # ---------- Power under H1 ----------
+  df_H1 <- chi2_summary_all %>%
+    filter(grepl("H1", scenario), k_row == k_row_pick, k_col == k_col_pick) %>%
+    select(k_lab, n, rate_perm, rate_boot) %>%
+    pivot_longer(
+      cols = c(rate_perm, rate_boot),
+      names_to = "method",
+      values_to = "rate"
+    ) %>%
+    mutate(
+      Method = recode(
+        method,
+        rate_perm = "CLASSIC",
+        rate_boot = "BOOTEI"
+      ),
+      Metric = "Power"
+    )
+  
+  # ---------- Size under H0 ----------
+  df_H0 <- chi2_summary_all %>%
+    filter(grepl("H0", scenario), k_row == k_row_pick, k_col == k_col_pick) %>%
+    select(k_lab, n, rate_perm, rate_boot) %>%
+    pivot_longer(
+      cols = c(rate_perm, rate_boot),
+      names_to = "method",
+      values_to = "rate"
+    ) %>%
+    mutate(
+      Method = recode(
+        method,
+        rate_perm = "CLASSIC",
+        rate_boot = "BOOTEI"
+      ),
+      Metric = "Size"
+    )
+  
+  df_plot <- bind_rows(df_H1, df_H0) %>%
+    mutate(
+      Method = factor(Method, levels = c("CLASSIC", "BOOTEI")),
+      Metric = factor(Metric, levels = c("Power", "Size"))
+    ) %>%
+    arrange(Method, Metric, n)
+  
+  n_vals <- sort(unique(df_plot$n))
+  panel_label <- paste0(k_row_pick, "\u00D7", k_col_pick)
+  
+  # Fewer x ticks only in panel A
+  x_breaks <- if (k_row_pick == 2L && k_col_pick == 2L) {
+    c(10, 20, 50, 100, 500, 1000)
+  } else {
+    n_vals
+  }
+  
+  ggplot(
+    df_plot,
+    aes(
+      x = n,
+      y = rate,
+      group = interaction(Method, Metric)
+    )
+  ) +
+    geom_line(
+      aes(colour = Method, linetype = Method),
+      linewidth = 0.75
+    ) +
+    geom_point(
+      aes(shape = Metric, colour = Method),
+      size = 1.45,
+      stroke = 0.60,
+      fill = "white"
+    ) +
+    geom_hline(
+      yintercept = alpha_nominal,
+      colour = "black",
+      linewidth = 0.75,
+      linetype = "dotted",
+      lineend = "round"
+    ) +
+    scale_colour_manual(
+      values = c(
+        "CLASSIC" = "grey35",
+        "BOOTEI"  = "black"
+      ),
+      guide = "none"
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "CLASSIC" = "11",
+        "BOOTEI"  = "solid"
+      ),
+      guide = "none"
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Power" = 21,
+        "Size"  = 22
+      ),
+      guide = "none"
+    ) +
+    scale_x_log10(
+      breaks = x_breaks,
+      labels = label_number()(x_breaks),
+      limits = range(n_vals)
+    ) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = c(0, alpha_nominal, 0.25, 0.50, 0.75, 1.00),
+      labels = percent_format(accuracy = 1),
+      expand = expansion(mult = c(0, 0.01))
+    ) +
+    labs(
+      subtitle = panel_label,
+      tag = panel_tag
+    ) +
+    theme_jrssb_fig_shared_axes(base_size = base_size)
+}
+
+# ------------------ Build panels ------------------
+powersize_panel_A_chi2_dgp2 <- make_powersize_panel_chi2_dgp2(
+  k_row_pick = 2L, k_col_pick = 2L, panel_tag = "A", base_size = 11
+)
+
+powersize_panel_B_chi2_dgp2 <- make_powersize_panel_chi2_dgp2(
+  k_row_pick = 3L, k_col_pick = 3L, panel_tag = "B", base_size = 11
+)
+
+powersize_panel_C_chi2_dgp2 <- make_powersize_panel_chi2_dgp2(
+  k_row_pick = 4L, k_col_pick = 4L, panel_tag = "C", base_size = 11
+)
+
+# ------------------ Panels row ------------------
+panels_row_chi2_dgp2 <-
+  powersize_panel_A_chi2_dgp2 +
+  powersize_panel_B_chi2_dgp2 +
+  powersize_panel_C_chi2_dgp2 +
+  plot_layout(
+    nrow   = 1,
+    widths = c(1.28, 1, 1)
+  )
+
+# ------------------ Final combined plot with shared axis titles ------------------
+powersize_plot_chi2_dgp2 <-
+  ggdraw() +
+  draw_plot(
+    panels_row_chi2_dgp2,
+    x = 0.085, y = 0.12,
+    width = 0.90, height = 0.82
+  ) +
+  draw_label(
+    "Empirical rejection rate",
+    x = 0.025, y = 0.53,
+    angle = 90,
+    size = 11
+  ) +
+  draw_label(
+    "Sample size, n (log10 scale)",
+    x = 0.54, y = 0.035,
+    size = 11
+  )
+
+print(powersize_plot_chi2_dgp2)
+
+# ------------------ Save outputs ------------------
+ggsave(
+  filename = file.path(ROOT, "powersize_plot_chi2_dgp2.pdf"),
+  plot     = powersize_plot_chi2_dgp2,
+  width    = 7,
+  height   = 6,
+  units    = "in",
+  device   = cairo_pdf
+)
+
+ggsave(
+  filename = file.path(ROOT, "powersize_plot_chi2_dgp2.tiff"),
+  plot     = powersize_plot_chi2_dgp2,
+  width    = 7,
+  height   = 6,
+  units    = "in",
+  dpi      = 600,
+  compression = "lzw",
+  device   = "tiff"
+)
+
