@@ -1,0 +1,567 @@
+# ================================================================
+# χ² (n=10, 2x2, DGP1) – analysis of chi2_N10_COMPARE_DETAIL_GLOBAL_dgp1.csv
+#   - Size (H0) and Power (H1) for: Perm, mid-p, BOOTEI, Randomized, χ²(asym), Fisher
+#   - McNemar tests under H1 (paired, one-sided comparisons)
+#   - Size tests under H0: binom.test vs alpha (NO BH: single scenario)
+#   - Extra table: mean size & mean power by method
+#   - Plots (2 panels): H0 ECDF vs Uniform + H0 density vs Uniform (y=1)
+# ================================================================
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(readr)
+  library(tibble)
+  library(ggplot2)
+  library(scales)
+  library(glue)
+  library(conflicted)
+  library(patchwork)
+})
+
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+conflict_prefer("mutate", "dplyr")
+
+# ---------------------------- PATH -----------------------------
+
+ROOT <- "."
+file_global <- file.path(ROOT, "chi2_N10_COMPARE_DETAIL_GLOBAL_dgp1.csv")
+stopifnot("chi2_N10_COMPARE_DETAIL_GLOBAL_dgp1.csv not found!" = file.exists(file_global))
+
+# -------------------------- LOAD DATA --------------------------
+
+chi2_all <- read_csv(file_global, show_col_types = FALSE) %>%
+  mutate(
+    n     = as.integer(n),
+    k_row = as.integer(k_row),
+    k_col = as.integer(k_col),
+    rep   = as.integer(rep),
+    sim_in_rep = as.integer(sim_in_rep)
+  )
+
+alpha_nominal <- chi2_all$alpha %>% unique() %>% sort() %>% tail(1)
+cat(glue("Nominal alpha: {alpha_nominal}\n"))
+
+# --------------------- CELL SUMMARY (H0/H1) --------------------
+
+chi2_summary <- chi2_all %>%
+  group_by(scenario, n, k_row, k_col, alpha, theta) %>%
+  summarise(
+    total_sim = n(),
+    
+    rej_perm   = sum(sig_perm,   na.rm = TRUE),
+    rej_midp   = sum(sig_midp,   na.rm = TRUE),
+    rej_bootei = sum(sig_bootei, na.rm = TRUE),
+    rej_rand   = sum(sig_rand,   na.rm = TRUE),
+    rej_asym   = sum(sig_asym,   na.rm = TRUE),
+    rej_fisher = sum(sig_fisher, na.rm = TRUE),
+    
+    rate_perm   = rej_perm   / total_sim,
+    rate_midp   = rej_midp   / total_sim,
+    rate_bootei = rej_bootei / total_sim,
+    rate_rand   = rej_rand   / total_sim,
+    rate_asym   = rej_asym   / total_sim,
+    rate_fisher = rej_fisher / total_sim,
+    .groups = "drop"
+  )
+
+cat("\n================ SUMMARY (rates at alpha) ======================\n")
+print(chi2_summary, n = Inf)
+
+# ---------------------- MCNEMAR TESTS (H1) ---------------------
+
+mcnemar_binom <- function(b, c) {
+  disc <- b + c
+  if (disc <= 0) return(1.0)
+  pbinom(b - 1, disc, 0.5, lower.tail = FALSE)  # one-sided: method1 > method2
+}
+
+mcnemar_block <- function(df, m1, m2, lab1, lab2) {
+  s1 <- df[[m1]]
+  s2 <- df[[m2]]
+  a <- sum(s1 & s2,  na.rm = TRUE)
+  b <- sum(s1 & !s2, na.rm = TRUE)
+  c <- sum(!s1 & s2, na.rm = TRUE)
+  d <- sum(!s1 & !s2,na.rm = TRUE)
+  tibble(
+    total_sim = nrow(df),
+    method1 = lab1,
+    method2 = lab2,
+    rate1   = mean(s1, na.rm = TRUE),
+    rate2   = mean(s2, na.rm = TRUE),
+    a = a, b = b, c = c, d = d,
+    p_mcn_1gt2 = mcnemar_binom(b, c),
+    p_mcn_2gt1 = mcnemar_binom(c, b),
+    diff_rate  = mean(s1, na.rm = TRUE) - mean(s2, na.rm = TRUE)
+  )
+}
+
+df_H1 <- chi2_all %>% filter(grepl("H1", scenario))
+
+H1_mcnemar_tbl <- bind_rows(
+  mcnemar_block(df_H1, "sig_bootei", "sig_perm", "BOOTEI", "Perm"),
+  mcnemar_block(df_H1, "sig_bootei", "sig_midp", "BOOTEI", "mid-p"),
+  mcnemar_block(df_H1, "sig_bootei", "sig_rand", "BOOTEI", "Randomized"),
+  mcnemar_block(df_H1, "sig_bootei", "sig_asym", "BOOTEI", "ChiSq-asym"),
+  mcnemar_block(df_H1, "sig_bootei", "sig_fisher", "BOOTEI", "Fisher")
+)
+
+cat("\n================ MCNEMAR (H1, one-sided) =======================\n")
+print(H1_mcnemar_tbl, n = Inf)
+
+# -------------------- SIZE TESTS (H0): binom.test ---------------
+
+df_H0 <- chi2_all %>% filter(grepl("H0", scenario))
+
+h0_rej <- tibble(
+  method = c("Perm", "mid-p", "BOOTEI", "Randomized", "ChiSq-asym", "Fisher"),
+  rej = c(
+    sum(df_H0$sig_perm,   na.rm = TRUE),
+    sum(df_H0$sig_midp,   na.rm = TRUE),
+    sum(df_H0$sig_bootei, na.rm = TRUE),
+    sum(df_H0$sig_rand,   na.rm = TRUE),
+    sum(df_H0$sig_asym,   na.rm = TRUE),
+    sum(df_H0$sig_fisher, na.rm = TRUE)
+  ),
+  total_sim = nrow(df_H0),
+  alpha = alpha_nominal
+)
+
+binom_tests_row <- function(rej, tot, alpha) {
+  bt_two <- binom.test(rej, tot, p = alpha, alternative = "two.sided")
+  tibble(
+    size_hat = rej / tot,
+    p_two     = bt_two$p.value,
+    ci_lo     = unname(bt_two$conf.int[1]),
+    ci_hi     = unname(bt_two$conf.int[2]),
+    p_greater = binom.test(rej, tot, p = alpha, alternative = "greater")$p.value,
+    p_less    = binom.test(rej, tot, p = alpha, alternative = "less")$p.value
+  )
+}
+
+H0_tests <- h0_rej %>%
+  rowwise() %>%
+  mutate(tmp = list(binom_tests_row(rej, total_sim, alpha))) %>%
+  unnest(cols = c(tmp)) %>%
+  ungroup() %>%
+  mutate(
+    size_flag = case_when(
+      p_greater < 0.05 ~ "↑ (size > α)",
+      p_less    < 0.05 ~ "↓ (size < α)",
+      TRUE             ~ "OK"
+    )
+  ) %>%
+  arrange(factor(method, levels = c("Perm","mid-p","BOOTEI","Randomized","ChiSq-asym","Fisher")))
+
+cat("\n================ SIZE TESTS (H0): binom.test ===================\n")
+print(H0_tests, n = Inf)
+
+# -------------------- EXTRA TABLE: MEAN SIZE & POWER -------------
+
+mean_rates <- tibble(
+  method = c("Perm","mid-p","BOOTEI","Randomized","ChiSq-asym","Fisher"),
+  size  = c(
+    mean(df_H0$sig_perm,   na.rm = TRUE),
+    mean(df_H0$sig_midp,   na.rm = TRUE),
+    mean(df_H0$sig_bootei, na.rm = TRUE),
+    mean(df_H0$sig_rand,   na.rm = TRUE),
+    mean(df_H0$sig_asym,   na.rm = TRUE),
+    mean(df_H0$sig_fisher, na.rm = TRUE)
+  ),
+  power = c(
+    mean(df_H1$sig_perm,   na.rm = TRUE),
+    mean(df_H1$sig_midp,   na.rm = TRUE),
+    mean(df_H1$sig_bootei, na.rm = TRUE),
+    mean(df_H1$sig_rand,   na.rm = TRUE),
+    mean(df_H1$sig_asym,   na.rm = TRUE),
+    mean(df_H1$sig_fisher, na.rm = TRUE)
+  )
+)
+
+cat("\n================ MEAN SIZE (H0) & MEAN POWER (H1) ==============\n")
+print(mean_rates, n = Inf)
+
+# ------------------ PLOT: H0 calibration (ECDF), 6 subplots ------------------
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+  library(scales)
+})
+
+plot_h0_ecdf_grid_6 <- function(chi2_all,
+                                k_row_pick = 2L, k_col_pick = 2L,
+                                n_pick = 10L,
+                                title = "H0 calibration (ECDF)",
+                                subtitle = "Diagonal = Uniform(0,1)") {
+  
+  df0 <- chi2_all %>%
+    filter(grepl("H0", scenario),
+           k_row == k_row_pick, k_col == k_col_pick,
+           n == n_pick)
+  
+  pal <- c(
+    "mid-p"        = "#E69F00",
+    "BOOTEI"       = "#0072B2",
+    "Randomised"   = "#CC79A7",
+    "Fisher"       = "#000000",
+    "Perm classic" = "#D55E00",
+    "Parametric"   = "#009E73"
+  )
+  
+  # NOTE: use your actual column names: p_bootei and p_asym (not p_boot / p_asymp)
+  panels <- tibble::tribble(
+    ~lab,           ~col,
+    "mid-p",        "p_midp",
+    "BOOTEI",       "p_bootei",
+    "Randomised",   "p_rand",
+    "Fisher",       "p_fisher",
+    "Perm classic", "p_perm",
+    "Parametric",   "p_asym"
+  )
+  
+  missing_cols <- setdiff(panels$col, names(df0))
+  if (length(missing_cols) > 0) {
+    warning("Missing p-value columns in df0: ", paste(missing_cols, collapse = ", "))
+    panels <- panels %>% filter(col %in% names(df0))
+  }
+  stopifnot(nrow(panels) == 6L)  # keep strict: you want all 6 panels
+  
+  theme_paper_big <- function(base_size = 16) {
+    theme_bw(base_size = base_size) +
+      theme(
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.35, colour = "grey90"),
+        axis.title       = element_text(size = base_size + 2),
+        axis.text        = element_text(size = base_size),
+        plot.title       = element_text(face = "bold", size = base_size + 3, hjust = 0.5),
+        plot.subtitle    = element_text(size = base_size + 1, hjust = 0.5),
+        legend.position  = "none",
+        plot.margin      = margin(8, 10, 8, 10)
+      )
+  }
+  
+  make_panel <- function(lab, colname) {
+    d <- df0 %>%
+      transmute(p = .data[[colname]]) %>%
+      filter(is.finite(p), !is.na(p), p >= 0, p <= 1)
+    
+    ggplot(d, aes(x = p)) +
+      stat_ecdf(linewidth = 1.25, colour = pal[[lab]]) +
+      geom_abline(intercept = 0, slope = 1,
+                  linetype = "dotted", linewidth = 0.9, colour = "grey25") +
+      scale_x_continuous(NULL, limits = c(0, 1), breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+      scale_y_continuous(NULL, limits = c(0, 1),
+                         breaks = c(0, 0.25, 0.5, 0.75, 1),
+                         labels = percent_format(accuracy = 1)) +
+      labs(title = lab) +
+      theme_paper_big(base_size = 16)
+  }
+  
+  plots <- lapply(seq_len(nrow(panels)), function(i) {
+    make_panel(panels$lab[i], panels$col[i])
+  })
+  
+  (plots[[1]] + plots[[2]] + plots[[3]]) /
+    (plots[[4]] + plots[[5]] + plots[[6]]) +
+    plot_annotation(
+      title = title,
+      subtitle = subtitle,
+      theme = theme(
+        plot.title    = element_text(hjust = 0.5, face = "bold", size = 22),
+        plot.subtitle = element_text(hjust = 0.5, size = 18),
+        plot.margin   = margin(8, 8, 8, 8)
+      )
+    )
+}
+
+print(plot_h0_ecdf_grid_6(chi2_all, k_row_pick = 2L, k_col_pick = 2L, n_pick = 10L))
+# --------------------------- OUTPUT ----------------------------
+
+cat("\n================ TABLES (copy/paste friendly) ===================\n")
+cat("\n-- Mean rates (size/power):\n")
+print(mean_rates, n = Inf)
+
+cat("\n-- H0 size tests (binom.test):\n")
+print(H0_tests %>%
+        select(method, total_sim, size_hat, alpha, ci_lo, ci_hi, p_two, p_greater, p_less, size_flag),
+      n = Inf)
+
+cat("\n-- H1 McNemar (paired, one-sided):\n")
+print(H1_mcnemar_tbl %>%
+        select(method1, method2, total_sim, rate1, rate2, diff_rate, p_mcn_1gt2, p_mcn_2gt1),
+      n = Inf)
+
+
+# ------------------ FIGURE 5 (JRSSB-style): H0 ECDF grid, 6 panels ----------
+# Drop-in block for:
+#   chi2_N10_COMPARE_DETAIL_GLOBAL_dgp1.csv
+#
+# Assumes:
+#   - chi2_all already exists
+#   - ROOT already exists
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(cowplot)
+library(tibble)
+
+# ------------------ Axis label formatter ------------------
+label_pvalue_jrssb <- function(x) {
+  out <- ifelse(
+    abs(x - 0) < 1e-10, "0",
+    ifelse(
+      abs(x - 1) < 1e-10, "1",
+      sprintf("%.2f", x)
+    )
+  )
+  out
+}
+
+# ------------------ Theme ------------------
+theme_jrssb_ecdf_panel <- function(base_size = 11,
+                                   show_x = TRUE,
+                                   show_y = TRUE,
+                                   tag_y = 1.03) {
+  
+  th <- theme_classic(base_size = base_size) +
+    theme(
+      panel.grid = element_blank(),
+      axis.line  = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks.length = grid::unit(0.14, "cm"),
+      
+      axis.text.x = element_text(size = base_size - 1),
+      axis.text.y = element_text(size = base_size - 1),
+      
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      
+      plot.title = element_blank(),
+      plot.subtitle = element_text(
+        size = base_size,
+        hjust = 0.5,
+        margin = margin(b = 4)
+      ),
+      
+      plot.tag = element_text(size = base_size + 1, face = "bold"),
+      plot.tag.position = c(0.01, tag_y),
+      
+      legend.position = "none",
+      plot.margin = margin(10, 4, 5, 4)
+    )
+  
+  if (!show_x) {
+    th <- th + theme(
+      axis.text.x  = element_blank(),
+      axis.ticks.x = element_blank()
+    )
+  }
+  
+  if (!show_y) {
+    th <- th + theme(
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank()
+    )
+  }
+  
+  th
+}
+
+# ------------------ Single-panel function ------------------
+make_ecdf_panel_chi2_compare_dgp1 <- function(df_data,
+                                              p_col,
+                                              panel_label,
+                                              panel_tag,
+                                              show_x = TRUE,
+                                              show_y = TRUE,
+                                              tag_y = 1.03,
+                                              base_size = 11) {
+  
+  d <- df_data %>%
+    transmute(p = .data[[p_col]]) %>%
+    filter(is.finite(p), !is.na(p), p >= 0, p <= 1)
+  
+  ggplot(d, aes(x = p)) +
+    stat_ecdf(
+      linewidth = 0.80,
+      colour = "black"
+    ) +
+    geom_abline(
+      intercept = 0,
+      slope = 1,
+      linetype = "dotted",
+      linewidth = 0.75,
+      colour = "grey35"
+    ) +
+    scale_x_continuous(
+      limits = c(0, 1),
+      breaks = c(0, 0.25, 0.50, 0.75, 1.00),
+      labels = label_pvalue_jrssb,
+      expand = expansion(mult = c(0, 0))
+    ) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = c(0, 0.25, 0.50, 0.75, 1.00),
+      labels = label_number(accuracy = 0.01),
+      expand = expansion(mult = c(0, 0))
+    ) +
+    coord_cartesian(expand = FALSE) +
+    labs(
+      subtitle = panel_label,
+      tag = panel_tag
+    ) +
+    theme_jrssb_ecdf_panel(
+      base_size = base_size,
+      show_x = show_x,
+      show_y = show_y,
+      tag_y = tag_y
+    )
+}
+
+# ------------------ Data for the figure ------------------
+df_h0_ecdf_chi2_compare_dgp1 <- chi2_all %>%
+  filter(
+    grepl("H0", scenario),
+    k_row == 2L,
+    k_col == 2L,
+    n == 10L
+  )
+
+panel_specs_chi2_compare_dgp1 <- tribble(
+  ~panel_tag, ~panel_label,          ~p_col,      ~show_x, ~show_y, ~tag_y,
+  "A",        "mid-p",               "p_midp",    FALSE,   TRUE,    1.03,
+  "B",        "BOOTEI",              "p_bootei",  FALSE,   FALSE,   1.03,
+  "C",        "Randomised",          "p_rand",    FALSE,   FALSE,   1.03,
+  "D",        "Fisher",              "p_fisher",  TRUE,    TRUE,    1.00,
+  "E",        "Permutation",         "p_perm",    TRUE,    FALSE,   1.00,
+  "F",        "Parametric",  "p_asym",    TRUE,    FALSE,   1.00
+)
+
+missing_p_cols <- setdiff(panel_specs_chi2_compare_dgp1$p_col, names(df_h0_ecdf_chi2_compare_dgp1))
+if (length(missing_p_cols) > 0) {
+  stop("Missing p-value columns: ", paste(missing_p_cols, collapse = ", "))
+}
+
+# ------------------ Build panels ------------------
+ecdf_panel_A_chi2_compare_dgp1 <- make_ecdf_panel_chi2_compare_dgp1(
+  df_data     = df_h0_ecdf_chi2_compare_dgp1,
+  p_col       = "p_midp",
+  panel_label = "mid-p",
+  panel_tag   = "A",
+  show_x      = FALSE,
+  show_y      = TRUE,
+  tag_y       = 1.03,
+  base_size   = 11
+)
+
+ecdf_panel_B_chi2_compare_dgp1 <- make_ecdf_panel_chi2_compare_dgp1(
+  df_data     = df_h0_ecdf_chi2_compare_dgp1,
+  p_col       = "p_bootei",
+  panel_label = "BOOTEI",
+  panel_tag   = "B",
+  show_x      = FALSE,
+  show_y      = FALSE,
+  tag_y       = 1.03,
+  base_size   = 11
+)
+
+ecdf_panel_C_chi2_compare_dgp1 <- make_ecdf_panel_chi2_compare_dgp1(
+  df_data     = df_h0_ecdf_chi2_compare_dgp1,
+  p_col       = "p_rand",
+  panel_label = "Randomised",
+  panel_tag   = "C",
+  show_x      = FALSE,
+  show_y      = FALSE,
+  tag_y       = 1.03,
+  base_size   = 11
+)
+
+ecdf_panel_D_chi2_compare_dgp1 <- make_ecdf_panel_chi2_compare_dgp1(
+  df_data     = df_h0_ecdf_chi2_compare_dgp1,
+  p_col       = "p_fisher",
+  panel_label = "Fisher",
+  panel_tag   = "D",
+  show_x      = TRUE,
+  show_y      = TRUE,
+  tag_y       = 1.00,
+  base_size   = 11
+)
+
+ecdf_panel_E_chi2_compare_dgp1 <- make_ecdf_panel_chi2_compare_dgp1(
+  df_data     = df_h0_ecdf_chi2_compare_dgp1,
+  p_col       = "p_perm",
+  panel_label = "Permutation",
+  panel_tag   = "E",
+  show_x      = TRUE,
+  show_y      = FALSE,
+  tag_y       = 1.00,
+  base_size   = 11
+)
+
+ecdf_panel_F_chi2_compare_dgp1 <- make_ecdf_panel_chi2_compare_dgp1(
+  df_data     = df_h0_ecdf_chi2_compare_dgp1,
+  p_col       = "p_asym",
+  panel_label = "Parametric",
+  panel_tag   = "F",
+  show_x      = TRUE,
+  show_y      = FALSE,
+  tag_y       = 1.00,
+  base_size   = 11
+)
+
+# ------------------ Panels grid ------------------
+ecdf_panels_grid_chi2_compare_dgp1 <-
+  (ecdf_panel_A_chi2_compare_dgp1 +
+     ecdf_panel_B_chi2_compare_dgp1 +
+     ecdf_panel_C_chi2_compare_dgp1) /
+  (ecdf_panel_D_chi2_compare_dgp1 +
+     ecdf_panel_E_chi2_compare_dgp1 +
+     ecdf_panel_F_chi2_compare_dgp1)
+
+# ------------------ Final combined plot with shared axis titles ------------------
+ecdf_plot_chi2_compare_dgp1 <-
+  ggdraw() +
+  draw_plot(
+    ecdf_panels_grid_chi2_compare_dgp1,
+    x = 0.085, y = 0.11,
+    width = 0.90, height = 0.84
+  ) +
+  draw_label(
+    "Empirical CDF",
+    x = 0.025, y = 0.53,
+    angle = 90,
+    size = 11
+  ) +
+  draw_label(
+    "p-value",
+    x = 0.54, y = 0.035,
+    size = 11
+  )
+
+print(ecdf_plot_chi2_compare_dgp1)
+
+# ------------------ Save outputs ------------------
+ggsave(
+  filename = file.path(ROOT, "ecdf_plot_chi2_compare_dgp1.pdf"),
+  plot     = ecdf_plot_chi2_compare_dgp1,
+  width    = 7,
+  height   = 5.8,
+  units    = "in",
+  device   = cairo_pdf
+)
+
+ggsave(
+  filename = file.path(ROOT, "ecdf_plot_chi2_compare_dgp1.tiff"),
+  plot     = ecdf_plot_chi2_compare_dgp1,
+  width    = 7,
+  height   = 5.8,
+  units    = "in",
+  dpi      = 600,
+  compression = "lzw",
+  device   = "tiff"
+)
