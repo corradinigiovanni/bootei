@@ -15,6 +15,7 @@ suppressPackageStartupMessages({
   library(glue)
   library(conflicted)
   library(patchwork)
+  library(cowplot)
 })
 
 conflict_prefer("select", "dplyr")
@@ -445,161 +446,227 @@ print(welch_H0_summary_noBH)
 
 # ------------------ ONE FIGURE: POWER (H1) + SIZE (H0), LOG10 X ----------
 
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(scales)
-library(glue)
-library(patchwork)
-
-col_perm   <- "#D55E00"
-col_bootei <- "#0072B2"
-
-theme_clean_big <- function(base_size = 14) {
-  theme_bw(base_size = base_size) +
+# ------------------ Theme ------------------
+theme_jrssb_fig_shared_axes <- function(base_size = 11) {
+  theme_classic(base_size = base_size) +
     theme(
-      panel.grid.minor   = element_blank(),
-      panel.grid.major.x = element_blank(),
+      panel.grid = element_blank(),
+      axis.line  = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks = element_line(linewidth = 0.4, colour = "black"),
+      axis.ticks.length = grid::unit(0.14, "cm"),
       
-      axis.text.x  = element_text(size = base_size + 0.5, angle = 45, hjust = 1),
-      axis.text.y  = element_text(size = base_size + 0.5),
+      axis.text.x = element_text(
+        size  = base_size - 2,
+        angle = 35,
+        hjust = 1,
+        vjust = 1
+      ),
+      axis.text.y = element_text(size = base_size - 1),
       
-      axis.title.x = element_text(size = base_size + 4, margin = margin(t = 10)),
-      axis.title.y = element_text(size = base_size + 4, margin = margin(r = 10)),
+      # shared axis titles outside the panels
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
       
-      axis.ticks.length = grid::unit(0.25, "cm"),
-      axis.ticks        = element_line(linewidth = 0.8),
+      plot.title    = element_blank(),
+      plot.subtitle = element_text(
+        size = base_size,
+        hjust = 0.5,
+        margin = margin(b = 4)
+      ),
       
-      plot.title = element_text(face = "bold", size = base_size + 6),
+      # move panel tags slightly higher
+      plot.tag = element_text(size = base_size + 1, face = "bold"),
+      plot.tag.position = c(0.01, 1.03),
       
-      legend.position = "bottom",
-      legend.box      = "horizontal",
-      legend.text     = element_text(size = base_size + 2),
+      legend.position = "none",
       
-      # extra left margin so the external tick/label are not clipped
-      plot.margin = margin(10, 12, 10, 26)
+      # a bit more top margin so A/B/C have room
+      plot.margin = margin(10, 4, 5, 4)
     )
 }
 
-plot_size_power_log10 <- function(k_pick, base_size = 14) {
+# ------------------ Single-panel function ------------------
+make_powersize_panel_welch_dgp2 <- function(k_pick, panel_tag, base_size = 11) {
   
-  # -------------------- Power under H1 --------------------
+  # ---------- Power under H1 ----------
   df_H1 <- welch_summary_all %>%
     filter(grepl("H1", scenario), k == k_pick) %>%
     select(k_lab, n_eff, rate_perm, rate_boot) %>%
     pivot_longer(
-      c(rate_perm, rate_boot),
-      names_to  = "method",
+      cols = c(rate_perm, rate_boot),
+      names_to = "method",
       values_to = "rate"
     ) %>%
     mutate(
-      Method = recode(method,
-                      rate_perm = "CLASSIC",
-                      rate_boot = "BOOTEI"),
-      Method = factor(Method, levels = c("CLASSIC", "BOOTEI")),
+      Method = recode(
+        method,
+        rate_perm = "CLASSIC",
+        rate_boot = "BOOTEI"
+      ),
       Metric = "Power"
     )
   
-  # -------------------- Size under H0 ---------------------
+  # ---------- Size under H0 ----------
   df_H0 <- welch_summary_all %>%
     filter(grepl("H0", scenario), k == k_pick) %>%
     select(k_lab, n_eff, rate_perm, rate_boot) %>%
     pivot_longer(
-      c(rate_perm, rate_boot),
-      names_to  = "method",
+      cols = c(rate_perm, rate_boot),
+      names_to = "method",
       values_to = "rate"
     ) %>%
     mutate(
-      Method = recode(method,
-                      rate_perm = "CLASSIC",
-                      rate_boot = "BOOTEI"),
-      Method = factor(Method, levels = c("CLASSIC", "BOOTEI")),
+      Method = recode(
+        method,
+        rate_perm = "CLASSIC",
+        rate_boot = "BOOTEI"
+      ),
       Metric = "Size"
     )
   
-  # -------------------- bind + labels ---------------------
-  df_k <- bind_rows(df_H1, df_H0) %>%
-    mutate(Metric = factor(Metric, levels = c("Power", "Size"))) %>%
-    arrange(n_eff, Method, Metric)
+  df_plot <- bind_rows(df_H1, df_H0) %>%
+    mutate(
+      Method = factor(Method, levels = c("CLASSIC", "BOOTEI")),
+      Metric = factor(Metric, levels = c("Power", "Size"))
+    ) %>%
+    arrange(Method, Metric, n_eff)
   
-  k_lab_here <- unique(df_k$k_lab)
-  n_vals     <- sort(unique(df_k$n_eff))
+  n_vals <- sort(unique(df_plot$n_eff))
+  panel_label <- unique(df_plot$k_lab)[1]
   
-  # -------------------- external alpha tick + label (same visual length across panels) ----
-  # fixed fraction of the panel width in log10-scale => k=3 tick matches k=5/7 visually
-  tick_frac      <- 0.085
-  lab_gap_log10  <- 0.04
+  # Fewer x ticks only in panel A
+  x_breaks <- if (k_pick == 3L && length(n_vals) > 6L) {
+    n_vals[unique(round(seq(1, length(n_vals), length.out = 6)))]
+  } else {
+    n_vals
+  }
   
-  x_min <- min(n_vals)
-  x_max <- max(n_vals)
-  
-  log_range     <- log10(x_max) - log10(x_min)
-  tick_w_log10  <- tick_frac * log_range
-  
-  x_axis_left <- x_min
-  x_tick_out  <- x_axis_left / (10^tick_w_log10)
-  x_lab_out   <- x_axis_left / (10^(tick_w_log10 + lab_gap_log10))
-  
-  alpha_lab <- paste0(round(100 * alpha_nominal), "%")  # typically "5%"
-  
-  ggplot(df_k,
-         aes(x = n_eff, y = rate,
-             colour = Method,
-             group  = interaction(Method, Metric))) +
-    
-    geom_hline(yintercept = alpha_nominal, linetype = "dashed", linewidth = 0.9) +
-    
-    geom_line(linewidth = 1.3) +
-    geom_point(aes(shape = Metric), size = 2.4) +
-    scale_shape_manual(values = c(Power = 16, Size = 17), guide = "none") +
-    
-    # ---- external tick + label
-    annotate(
-      "segment",
-      x = x_tick_out, xend = x_axis_left,
-      y = alpha_nominal, yend = alpha_nominal,
-      linewidth = 1.6,
-      colour = "black"
+  ggplot(
+    df_plot,
+    aes(
+      x = n_eff,
+      y = rate,
+      group = interaction(Method, Metric)
+    )
+  ) +
+    geom_line(
+      aes(colour = Method, linetype = Method),
+      linewidth = 0.75
     ) +
-    annotate(
-      "text",
-      x = x_lab_out, y = alpha_nominal,
-      label = alpha_lab,
-      hjust = 1, vjust = 0.5,
-      size  = (base_size + 2) / ggplot2::.pt,
-      colour = "black"
+    geom_point(
+      aes(shape = Metric, colour = Method),
+      size = 1.45,
+      stroke = 0.60,
+      fill = "white"
     ) +
-    
+    geom_hline(
+      yintercept = alpha_nominal,
+      colour = "black",
+      linewidth = 0.75,
+      linetype = "dotted",
+      lineend = "round"
+    ) +
+    scale_colour_manual(
+      values = c(
+        "CLASSIC" = "grey35",
+        "BOOTEI"  = "black"
+      ),
+      guide = "none"
+    ) +
+    scale_linetype_manual(
+      values = c(
+        "CLASSIC" = "11",
+        "BOOTEI"  = "solid"
+      ),
+      guide = "none"
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Power" = 21,
+        "Size"  = 22
+      ),
+      guide = "none"
+    ) +
     scale_x_log10(
-      expression(log[10](n[1] + n[2])),
-      breaks = n_vals, labels = n_vals,
-      limits = range(n_vals),
-      oob    = scales::oob_keep
+      breaks = x_breaks,
+      labels = label_number()(x_breaks),
+      limits = range(n_vals)
     ) +
     scale_y_continuous(
-      "Rate",
+      limits = c(0, 1),
+      breaks = c(0, alpha_nominal, 0.25, 0.50, 0.75, 1.00),
       labels = percent_format(accuracy = 1),
-      limits = c(0, 1)
+      expand = expansion(mult = c(0, 0.01))
     ) +
-    scale_colour_manual(values = c("CLASSIC" = col_perm, "BOOTEI" = col_bootei)) +
-    labs(title = k_lab_here[1], colour = NULL) +
-    
-    coord_cartesian(expand = FALSE, clip = "off") +
-    theme_clean_big(base_size = base_size)
+    labs(
+      subtitle = panel_label,
+      tag = panel_tag
+    ) +
+    theme_jrssb_fig_shared_axes(base_size = base_size)
 }
 
-p3 <- plot_size_power_log10(3L, base_size = 14)
-p5 <- plot_size_power_log10(5L, base_size = 14)
-p7 <- plot_size_power_log10(7L, base_size = 14)
+# ------------------ Build panels ------------------
+powersize_panel_A_welch_dgp2 <- make_powersize_panel_welch_dgp2(
+  k_pick = 3L, panel_tag = "A", base_size = 11
+)
 
-fig_size_power <- (p3 + p5 + p7) +
-  plot_layout(nrow = 1, guides = "collect") +
-  plot_annotation(
-    title = "Power under H1 and Size under H0",
-    theme = theme(
-      plot.title = element_text(face = "bold", size = 22, hjust = 0.5, margin = margin(b = 10))
-    )
-  ) &
-  theme(legend.position = "bottom")
+powersize_panel_B_welch_dgp2 <- make_powersize_panel_welch_dgp2(
+  k_pick = 5L, panel_tag = "B", base_size = 11
+)
 
-print(fig_size_power)
+powersize_panel_C_welch_dgp2 <- make_powersize_panel_welch_dgp2(
+  k_pick = 7L, panel_tag = "C", base_size = 11
+)
+
+# ------------------ Panels row ------------------
+panels_row_welch_dgp2 <-
+  powersize_panel_A_welch_dgp2 +
+  powersize_panel_B_welch_dgp2 +
+  powersize_panel_C_welch_dgp2 +
+  plot_layout(
+    nrow   = 1,
+    widths = c(1.28, 1, 1)
+  )
+
+# ------------------ Final combined plot with shared axis titles ------------------
+powersize_plot_welch_dgp2 <-
+  ggdraw() +
+  draw_plot(
+    panels_row_welch_dgp2,
+    x = 0.085, y = 0.12,
+    width = 0.90, height = 0.82
+  ) +
+  draw_label(
+    "Empirical rejection rate",
+    x = 0.025, y = 0.53,
+    angle = 90,
+    size = 11
+  ) +
+  draw_label(
+    "Total sample size, n_eff = n1 + n2 (log10 scale)",
+    x = 0.54, y = 0.035,
+    size = 11
+  )
+
+print(powersize_plot_welch_dgp2)
+
+# ------------------ Save outputs ------------------
+ggsave(
+  filename = file.path(ROOT, "powersize_plot_welch_dgp2.pdf"),
+  plot     = powersize_plot_welch_dgp2,
+  width    = 7,
+  height   = 6,
+  units    = "in",
+  device   = cairo_pdf
+)
+
+ggsave(
+  filename = file.path(ROOT, "powersize_plot_welch_dgp2.tiff"),
+  plot     = powersize_plot_welch_dgp2,
+  width    = 7,
+  height   = 6,
+  units    = "in",
+  dpi      = 600,
+  compression = "lzw",
+  device   = "tiff"
+)
