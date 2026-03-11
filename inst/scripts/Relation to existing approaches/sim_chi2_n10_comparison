@@ -1,0 +1,448 @@
+## NOTE: Replication / coarse-data comparison script (n = 10 only, DGP1).
+## Compares: Perm(add-one), mid-p, BOOTEI(Sobol), Randomized, χ² asymptotic, Fisher exact.
+## Output:
+##   - chi2_N10_COMPARE_DETAIL_GLOBAL_dgp1.csv
+##   - chi2_N10_COMPARE_SUMMARY_dgp1.csv
+
+suppressPackageStartupMessages({
+  library(batchtools)
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(readr)
+  library(purrr)
+})
+
+# ------------------------------------------------------------------
+# 0) PATH / ENGINE
+# ------------------------------------------------------------------
+
+ROOT <- "."
+dir.create(ROOT, recursive = TRUE, showWarnings = FALSE)
+setwd(ROOT)
+
+library(bootei)
+
+# ------------------------------------------------------------------
+# 1) GLOBAL PARAMETERS (n=10 only)
+# ------------------------------------------------------------------
+
+set.seed(123)
+
+alpha_test <- 0.05
+theta_H0   <- 0
+n_fixed    <- 10L
+k_row_fixed <- 2L
+k_col_fixed <- 2L
+
+sim_MC_per_job <- 100L   # datasets per job
+n_rep          <- 50L    # jobs per scenario
+R_perm         <- 5000L  # permutations
+B_boot         <- 200L   # BOOTEI bootstrap replicates (Sobol)
+
+gamma_theta      <- 0.35
+theta_H1_ref_2x2 <- 2.5
+theta_H1_fun <- function(n, theta_ref, gamma = gamma_theta) theta_ref * n^(-gamma)
+
+RUN_H0 <- TRUE
+RUN_H1 <- TRUE
+
+# ------------------------------------------------------------------
+# 2) DGP1: RC1, uniform margins
+# ------------------------------------------------------------------
+
+std_scores <- function(k) as.numeric(scale(0:(k - 1), center = TRUE, scale = TRUE))
+
+simulate_rc1_rect_base <- function(n = 100,
+                                   k_row = 2,
+                                   k_col = 2,
+                                   theta = 0,
+                                   effe = TRUE) {
+  stopifnot(k_row >= 2L, k_col >= 2L, n >= 2L)
+  
+  cat_x <- paste0("R", seq_len(k_row))
+  cat_y <- paste0("C", seq_len(k_col))
+  
+  p <- rep(1 / k_row, k_row)
+  q <- rep(1 / k_col, k_col)
+  u <- std_scores(k_row)
+  v <- std_scores(k_col)
+  
+  M <- outer(p, q, "*")
+  if (effe && theta != 0) {
+    M <- M * exp(theta * outer(u, v, "*"))
+  }
+  P <- M / sum(M)
+  
+  P_vec <- as.vector(P)
+  idx   <- sample.int(k_row * k_col, size = n, replace = TRUE, prob = P_vec)
+  
+  ii <- ((idx - 1L) %% k_row) + 1L
+  jj <- ((idx - 1L) %/% k_row) + 1L
+  
+  list(
+    x = factor(cat_x[ii], levels = cat_x),
+    y = factor(cat_y[jj], levels = cat_y)
+  )
+}
+
+simulate_rc1_rect_safe <- function(..., max_retry = 100L) {
+  for (i in seq_len(max_retry)) {
+    dat <- simulate_rc1_rect_base(...)
+    if (length(unique(dat$x)) > 1L && length(unique(dat$y)) > 1L) return(dat)
+  }
+  stop("simulate_rc1_rect_safe: exceeded max_retry without variability")
+}
+
+# ------------------------------------------------------------------
+# 3) Helpers
+# ------------------------------------------------------------------
+
+bootei_safe_p_chi2 <- function(x, y, B, R, midp, perm_seed) {
+  tryCatch({
+    bootei(
+      x           = as.character(x),
+      y           = as.character(y),
+      test        = "chisq",
+      B           = as.integer(B),
+      R           = as.integer(R),
+      alternative = "greater",
+      perm_seed   = as.numeric(perm_seed),
+      midp        = isTRUE(midp),
+      boot_type   = "sobol",
+      keep_perm_stats = FALSE
+    )$p.value
+  }, error = function(e) NA_real_)
+}
+
+safe_p_chisq_asym <- function(x, y) {
+  tryCatch({
+    tab <- table(x, y)
+    suppressWarnings(chisq.test(tab, correct = FALSE)$p.value)
+  }, error = function(e) NA_real_)
+}
+
+safe_p_fisher <- function(x, y) {
+  tryCatch({
+    tab <- table(x, y)
+    fisher.test(tab, alternative = "two.sided")$p.value
+  }, error = function(e) NA_real_)
+}
+
+recover_rand_components <- function(p_perm, p_midp, R) {
+  ge_hat <- (R + 1) * p_perm - 1
+  m_hat  <- R * p_midp
+  
+  eq_hat <- round(2 * (ge_hat - m_hat))
+  gt_hat <- round(ge_hat - eq_hat)
+  
+  eq_hat <- as.integer(max(0, min(R, eq_hat)))
+  gt_hat <- as.integer(max(0, min(R, gt_hat)))
+  if (gt_hat + eq_hat > R) {
+    overflow <- (gt_hat + eq_hat) - R
+    eq_hat <- as.integer(max(0, eq_hat - overflow))
+  }
+  
+  tibble(
+    gt = gt_hat,
+    eq = eq_hat,
+    ge = gt_hat + eq_hat
+  )
+}
+
+make_randomized_pvalue <- function(gt, eq, R, u_seed) {
+  set.seed(as.integer(u_seed))
+  u <- runif(1)
+  list(p_rand = (gt + u * eq) / R, u_value = u)
+}
+
+# ------------------------------------------------------------------
+# 4) One cell runner (n=10 only)
+# ------------------------------------------------------------------
+
+run_cell_chi2_n10_compare <- function(n,
+                                      k_row,
+                                      k_col,
+                                      alpha,
+                                      simulations,
+                                      theta,
+                                      effe,
+                                      B_boot,
+                                      R_perm,
+                                      seed_base = 910L,
+                                      max_retry_per_sim = 50L) {
+  stopifnot(n == 10L, k_row == 2L, k_col == 2L)
+  
+  out_list <- vector("list", simulations)
+  
+  i <- 1L
+  while (i <= simulations) {
+    attempts <- 0L
+    
+    repeat {
+      attempts <- attempts + 1L
+      if (attempts > max_retry_per_sim) {
+        out_list[[i]] <- tibble(
+          sim_in_rep = i,
+          attempt_used = attempts - 1L,
+          perm_seed = NA_real_,
+          u_seed    = NA_real_,
+          u_value   = NA_real_,
+          p_perm    = NA_real_,
+          p_midp    = NA_real_,
+          p_bootei  = NA_real_,
+          p_rand    = NA_real_,
+          p_asym    = NA_real_,
+          p_fisher  = NA_real_,
+          sig_perm  = NA,
+          sig_midp  = NA,
+          sig_bootei= NA,
+          sig_rand  = NA,
+          sig_asym  = NA,
+          sig_fisher= NA
+        )
+        i <- i + 1L
+        break
+      }
+      
+      dat <- simulate_rc1_rect_safe(
+        n = n, k_row = k_row, k_col = k_col, theta = theta, effe = effe
+      )
+      x <- dat$x
+      y <- dat$y
+      
+      perm_seed_i <- as.numeric(seed_base + 100000L * i + 1000L * attempts + 11L)
+      u_seed_i    <- as.numeric(seed_base + 100000L * i + 1000L * attempts + 50000L + 7L)
+      
+      p_perm_i <- bootei_safe_p_chi2(x, y, B = 1L,      R = R_perm, midp = FALSE, perm_seed = perm_seed_i)
+      p_midp_i <- bootei_safe_p_chi2(x, y, B = 1L,      R = R_perm, midp = TRUE,  perm_seed = perm_seed_i)
+      p_boot_i <- bootei_safe_p_chi2(x, y, B = B_boot,  R = R_perm, midp = FALSE, perm_seed = perm_seed_i)
+      
+      p_asym_i   <- safe_p_chisq_asym(x, y)
+      p_fisher_i <- safe_p_fisher(x, y)
+      
+      if (anyNA(c(p_perm_i, p_midp_i, p_boot_i, p_asym_i, p_fisher_i))) next
+      
+      rc <- recover_rand_components(p_perm = p_perm_i, p_midp = p_midp_i, R = R_perm)
+      rr <- make_randomized_pvalue(gt = rc$gt[[1]], eq = rc$eq[[1]], R = R_perm, u_seed = u_seed_i)
+      
+      p_rand_i <- rr$p_rand
+      u_val_i  <- rr$u_value
+      
+      out_list[[i]] <- tibble(
+        sim_in_rep  = i,
+        attempt_used = attempts,
+        perm_seed   = perm_seed_i,
+        u_seed      = u_seed_i,
+        u_value     = u_val_i,
+        p_perm      = p_perm_i,
+        p_midp      = p_midp_i,
+        p_bootei    = p_boot_i,
+        p_rand      = p_rand_i,
+        p_asym      = p_asym_i,
+        p_fisher    = p_fisher_i,
+        sig_perm    = p_perm_i   < alpha,
+        sig_midp    = p_midp_i   < alpha,
+        sig_bootei  = p_boot_i   < alpha,
+        sig_rand    = p_rand_i   < alpha,
+        sig_asym    = p_asym_i   < alpha,
+        sig_fisher  = p_fisher_i < alpha
+      )
+      
+      i <- i + 1L
+      break
+    }
+  }
+  
+  bind_rows(out_list) %>%
+    filter(!is.na(p_perm), !is.na(p_midp), !is.na(p_bootei),
+           !is.na(p_rand), !is.na(p_asym), !is.na(p_fisher))
+}
+
+# ------------------------------------------------------------------
+# 5) batchtools job function (one rep_id = one job)
+# ------------------------------------------------------------------
+
+chi2_rep_task_n10_compare <- function(rep_id,
+                                      n,
+                                      k_row,
+                                      k_col,
+                                      alpha,
+                                      theta,
+                                      effe,
+                                      sim_MC_per_job,
+                                      B_boot,
+                                      R_perm) {
+  Sys.setenv(
+    OMP_NUM_THREADS        = "1",
+    OPENBLAS_NUM_THREADS   = "1",
+    MKL_NUM_THREADS        = "1",
+    BLIS_NUM_THREADS       = "1",
+    VECLIB_MAXIMUM_THREADS = "1",
+    NUMEXPR_NUM_THREADS    = "1",
+    GOTO_NUM_THREADS       = "1"
+  )
+  
+  set.seed(100 + as.integer(rep_id))
+  
+  detail <- run_cell_chi2_n10_compare(
+    n           = n,
+    k_row       = k_row,
+    k_col       = k_col,
+    alpha       = alpha,
+    simulations = sim_MC_per_job,
+    theta       = theta,
+    effe        = effe,
+    B_boot      = B_boot,
+    R_perm      = R_perm,
+    seed_base   = as.numeric(123 + as.integer(rep_id) * 234 +
+                               n + 345 * k_row + 456 * k_col)
+  )
+  
+  scenario_lab <- if (abs(theta) < 1e-12 || !effe) "H0 (Type-I)" else "H1 (Power)"
+  
+  detail %>%
+    mutate(
+      n        = n,
+      k_row    = k_row,
+      k_col    = k_col,
+      alpha    = alpha,
+      theta    = theta,
+      rep      = rep_id,
+      scenario = scenario_lab,
+      dataset_id = paste0(
+        gsub("[^A-Za-z0-9]", "", scenario_lab),
+        "_rep", sprintf("%03d", rep_id),
+        "_sim", sprintf("%04d", sim_in_rep)
+      )
+    ) %>%
+    select(dataset_id, scenario, rep, sim_in_rep, attempt_used,
+           perm_seed, u_seed, u_value,
+           p_perm, p_midp, p_bootei, p_rand, p_asym, p_fisher,
+           sig_perm, sig_midp, sig_bootei, sig_rand, sig_asym, sig_fisher,
+           n, k_row, k_col, alpha, theta)
+}
+
+# ------------------------------------------------------------------
+# 6) Run one scenario with batchtools (n=10 only)
+# ------------------------------------------------------------------
+
+run_one_scenario_n10_batch <- function(theta, effe, root_dir = ROOT) {
+  scen_lab_short <- if (abs(theta) < 1e-12 || !effe) "H0" else "H1"
+  
+  regdir <- tempfile(
+    pattern = sprintf("chi2_n10_compare_%s_dgp1_", scen_lab_short),
+    tmpdir  = tempdir()
+  )
+  
+  N_CORES <- min(parallel::detectCores(), n_rep)
+  
+  reg <- makeRegistry(
+    file.dir = regdir,
+    packages = c("dplyr", "tibble", "tidyr", "readr", "purrr", "bootei")
+  )
+  reg$cluster.functions <- makeClusterFunctionsMulticore(ncpus = N_CORES)
+  
+  batchMap(
+    fun = chi2_rep_task_n10_compare,
+    rep_id = 1:n_rep,
+    more.args = list(
+      n              = n_fixed,
+      k_row          = k_row_fixed,
+      k_col          = k_col_fixed,
+      alpha          = alpha_test,
+      theta          = theta,
+      effe           = effe,
+      sim_MC_per_job = sim_MC_per_job,
+      B_boot         = B_boot,
+      R_perm         = R_perm
+    ),
+    reg = reg
+  )
+  
+  ids <- findJobs(reg = reg)
+  submitJobs(ids = ids, resources = list(ncpus = 1L), reg = reg)
+  
+  cat("Running n=10 compare (DGP1):", regdir, "on", N_CORES, "cores...\n")
+  
+  ok <- waitForJobs(ids = ids, reg = reg)
+  cat("waitForJobs result:", ok, "for", regdir, "\n")
+  
+  if (!ok) {
+    cat("Failed jobs in", regdir, ":\n")
+    print(getErrorMessages(reg = reg))
+    try(removeRegistry(reg = reg), silent = TRUE)
+    stop("Stopping: fix job errors before aggregating.")
+  }
+  
+  done_ids <- findDone(reg = reg)
+  res_list <- reduceResultsList(ids = done_ids, reg = reg)
+  
+  try(removeRegistry(reg = reg), silent = TRUE)
+  
+  if (length(res_list) == 0L) {
+    warning("No results in ", regdir)
+    return(tibble())
+  }
+  
+  detail_all <- bind_rows(res_list)
+  
+  cat("Completed scenario:", scen_lab_short,
+      " — datasets=", nrow(detail_all), "\n", sep = "")
+  
+  detail_all
+}
+
+# ------------------------------------------------------------------
+# 7) MAIN (H0 + H1)
+# ------------------------------------------------------------------
+
+theta_H1_n10 <- theta_H1_fun(n_fixed, theta_ref = theta_H1_ref_2x2)
+
+detail_list <- list()
+
+if (isTRUE(RUN_H1)) {
+  message("\n=======================")
+  message(">>> χ² compare (DGP1): n=10, 2x2 | H1")
+  message("=======================\n")
+  detail_list[[length(detail_list) + 1L]] <- run_one_scenario_n10_batch(theta = theta_H1_n10, effe = TRUE)
+}
+
+if (isTRUE(RUN_H0)) {
+  message("\n=======================")
+  message(">>> χ² compare (DGP1): n=10, 2x2 | H0")
+  message("=======================\n")
+  detail_list[[length(detail_list) + 1L]] <- run_one_scenario_n10_batch(theta = theta_H0, effe = FALSE)
+}
+
+detail_global <- bind_rows(detail_list)
+
+file_detail  <- file.path(ROOT, "chi2_N10_COMPARE_DETAIL_GLOBAL_dgp1.csv")
+file_summary <- file.path(ROOT, "chi2_N10_COMPARE_SUMMARY_dgp1.csv")
+
+if (nrow(detail_global) > 0L) {
+  write_csv(detail_global, file_detail)
+  
+  summary_tbl <- detail_global %>%
+    group_by(scenario) %>%
+    summarise(
+      n_datasets = n(),
+      reject_perm   = mean(sig_perm,   na.rm = TRUE),
+      reject_midp   = mean(sig_midp,   na.rm = TRUE),
+      reject_bootei = mean(sig_bootei, na.rm = TRUE),
+      reject_rand   = mean(sig_rand,   na.rm = TRUE),
+      reject_asym   = mean(sig_asym,   na.rm = TRUE),
+      reject_fisher = mean(sig_fisher, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  write_csv(summary_tbl, file_summary)
+  
+  cat("\nSaved files:\n")
+  cat(" -", file_detail,  "\n")
+  cat(" -", file_summary, "\n")
+  cat("\nSummary (size/power at alpha=0.05):\n")
+  print(summary_tbl, n = Inf)
+} else {
+  cat("No rows produced.\n")
+}
