@@ -1,15 +1,20 @@
 # bootei
 
-BOOTEI (BOOTstrap Ensemble Inference) provides permutation tests with deterministic,
-coupled bootstrap tie-breaking, designed for low-resolution regimes such as small
-samples, sparse tables, few outcome levels, and pervasive ties.
+BOOTEI (BOOTstrap Ensemble Inference) implements add-one Monte Carlo permutation
+inference with deterministic bootstrap-based tie-breaking, designed for low-resolution
+settings such as small samples, sparse or imbalanced contingency tables, few outcome
+levels, and pervasive ties.
 
-The method preserves the original permutation test statistic and uses a fixed
-bootstrap ensemble score solely to break permutation ties via a lexicographic
-ordering. Under exchangeability, BOOTEI retains finite-sample validity and yields
-permutation p-values that are never larger than those from the corresponding
-classical permutation test.
+BOOTEI leaves the primary permutation test statistic unchanged and uses a fixed
+bootstrap-plan ensemble score solely to break permutation ties via a lexicographic
+ordering. Under exchangeability and the coupled fixed-plan construction, BOOTEI
+retains finite-sample validity and, when evaluated on the same realised permutation
+sample, yields permutation p-values that are never larger than those from the
+corresponding classical add-one permutation test.
 
+The paper focuses on Pearson's chi-square and Welch two-sample t permutation tests.
+The package also includes implementations for the Mann–Whitney rank-sum test,
+Spearman's rank correlation, and the Kruskal–Wallis test.
 
 ## Install
 
